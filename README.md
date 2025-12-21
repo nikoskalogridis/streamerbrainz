@@ -23,22 +23,35 @@ A modular Go daemon that controls [CamillaDSP](https://github.com/HEnquist/camil
 ### Build
 
 ```bash
-# Build the daemon
-go build -o argon-camilladsp-remote .
+# Build all binaries using Makefile (recommended)
+make
 
-# Build the CLI tool
-go build -o argon-ctl cmd/argon-ctl/main.go
+# Or build manually
+go build -o builds/argon-camilladsp-remote .
+go build -o builds/argon-ctl ./cmd/argon-ctl
+go build -o builds/ws_listen ./cmd/ws_listen
+
+# Clean build artifacts
+make clean
 ```
+
+All binaries are built to the `./builds` directory.
 
 ### Run
 
 ```bash
+# Show help and all available options
+./builds/argon-camilladsp-remote -help
+
+# Show version
+./builds/argon-camilladsp-remote -version
+
 # Start the daemon (requires root for IR input)
-sudo ./argon-camilladsp-remote
+sudo ./builds/argon-camilladsp-remote
 
 # Control volume via CLI
-./argon-ctl mute
-./argon-ctl set-volume -30.0
+./builds/argon-ctl mute
+./builds/argon-ctl set-volume -30.0
 ```
 
 ---
@@ -57,10 +70,16 @@ sudo ./argon-camilladsp-remote
 ```bash
 git clone <repository-url>
 cd argon-camilladsp-remote
-go build -o argon-camilladsp-remote .
-go build -o argon-ctl cmd/argon-ctl/main.go
-sudo cp argon-camilladsp-remote /usr/local/bin/
-sudo cp argon-ctl /usr/local/bin/
+
+# Build all binaries
+make
+
+# Install to /usr/local/bin (requires sudo)
+sudo make install
+
+# Or manually
+sudo cp builds/argon-camilladsp-remote /usr/local/bin/
+sudo cp builds/argon-ctl /usr/local/bin/
 ```
 
 ---
@@ -70,6 +89,12 @@ sudo cp argon-ctl /usr/local/bin/
 ### Daemon
 
 ```bash
+# Show comprehensive help
+argon-camilladsp-remote -help
+
+# Show version
+argon-camilladsp-remote -version
+
 # Basic usage
 sudo argon-camilladsp-remote
 
@@ -81,20 +106,27 @@ sudo argon-camilladsp-remote \
   -min -65.0 \
   -max 0.0 \
   -v
+
+# Run with verbose logging to see all parameters
+sudo argon-camilladsp-remote -v
 ```
 
 **Command-line flags:**
-- `-input` - Linux input event device for IR (default: `/dev/input/event6`)
-- `-ws` - CamillaDSP WebSocket URL (default: `ws://127.0.0.1:1234`)
-- `-socket` - Unix domain socket path for IPC (default: `/tmp/argon-camilladsp.sock`)
-- `-min` - Minimum volume in dB (default: `-65.0`)
-- `-max` - Maximum volume in dB (default: `0.0`)
-- `-update-hz` - Update loop frequency (default: `100`)
-- `-vel-max` - Maximum velocity in dB/s (default: `50.0`)
-- `-accel-time` - Acceleration time in seconds (default: `0.3`)
-- `-decay-tau` - Velocity decay time constant (default: `0.1`)
-- `-read-timeout-ms` - WebSocket read timeout (default: `200`)
-- `-v` - Verbose logging
+- `-input string` - Linux input event device for IR (default: `/dev/input/event6`)
+- `-ws string` - CamillaDSP WebSocket URL (default: `ws://127.0.0.1:1234`)
+- `-socket string` - Unix domain socket path for IPC (default: `/tmp/argon-camilladsp.sock`)
+- `-min float` - Minimum volume in dB (default: `-65.0`)
+- `-max float` - Maximum volume in dB (default: `0.0`)
+- `-update-hz int` - Update loop frequency in Hz (default: `30`)
+- `-vel-max float` - Maximum velocity in dB/s (default: `15.0`)
+- `-accel-time float` - Time to reach max velocity in seconds (default: `2.0`)
+- `-decay-tau float` - Velocity decay time constant in seconds (default: `0.2`)
+- `-read-timeout-ms int` - Timeout for websocket responses in ms (default: `500`)
+- `-v` - Enable verbose logging
+- `-version` - Print version and exit
+- `-help` - Print comprehensive help message
+
+Run `argon-camilladsp-remote -help` for detailed usage examples and notes.
 
 ### CLI Tool (argon-ctl)
 
@@ -141,13 +173,26 @@ echo '{"type":"toggle_mute"}' | nc -U /tmp/argon-camilladsp.sock
 ### Librespot (Spotify Connect)
 
 ```bash
-# Configure librespot with the hook script
-librespot --onevent /path/to/librespot-hook.sh ...
+# Show librespot-hook help
+argon-camilladsp-remote librespot-hook -help
+
+# Configure librespot to use the hook
+librespot --onevent argon-camilladsp-remote librespot-hook ...
 
 # Test manually with environment variables
 PLAYER_EVENT=volume_changed VOLUME=32768 ./argon-camilladsp-remote librespot-hook -v
 PLAYER_EVENT=playing TRACK_ID=test ./argon-camilladsp-remote librespot-hook -v
+
+# Use custom socket
+PLAYER_EVENT=playing ./argon-camilladsp-remote librespot-hook -socket /tmp/custom.sock
 ```
+
+**Librespot hook options:**
+- `-socket string` - Unix domain socket path for IPC (default: `/tmp/argon-camilladsp.sock`)
+- `-min float` - Minimum volume clamp in dB (default: `-65.0`)
+- `-max float` - Maximum volume clamp in dB (default: `0.0`)
+- `-v` - Enable verbose logging
+- `-help` - Print librespot-hook help message
 
 ---
 
@@ -248,7 +293,7 @@ Error:
 
 ```
 argon-camilladsp-remote/
-├── main.go           # Entry point and main event loop
+├── main.go           # Entry point, main event loop, and help system
 ├── daemon.go         # Central daemon loop
 ├── actions.go        # Action types and JSON encoding
 ├── velocity.go       # Velocity-based control logic
@@ -256,9 +301,16 @@ argon-camilladsp-remote/
 ├── websocket.go      # WebSocket client
 ├── input.go          # IR input event handling
 ├── ipc.go            # IPC server
+├── librespot.go      # Librespot integration
 ├── constants.go      # Configuration constants
+├── Makefile          # Build system
+├── builds/           # Compiled binaries (created by make)
+│   ├── argon-camilladsp-remote
+│   ├── argon-ctl
+│   └── ws_listen
 ├── cmd/
-│   └── argon-ctl/    # CLI tool
+│   ├── argon-ctl/    # CLI tool
+│   └── ws_listen/    # WebSocket listener example
 ├── examples/
 │   ├── python_client.py
 │   └── bash_client.sh
@@ -300,6 +352,9 @@ case MyAction:
 ### Daemon won't start
 
 ```bash
+# Show help to verify parameters
+./builds/argon-camilladsp-remote -help
+
 # Check if socket already exists
 rm -f /tmp/argon-camilladsp.sock
 
@@ -307,6 +362,9 @@ rm -f /tmp/argon-camilladsp.sock
 sudo chmod 666 /dev/input/event6
 # Or add user to input group
 sudo usermod -a -G input $USER
+
+# Run with verbose logging to see configuration
+sudo ./builds/argon-camilladsp-remote -v
 ```
 
 ### IPC connection refused
