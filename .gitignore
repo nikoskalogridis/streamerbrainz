@@ -7,9 +7,11 @@
 
 # Go build artifacts
 argon-camilladsp-remote
+argon-ctl
 /bin/
 /dist/
 /build/
+/builds/
 
 # Test binary, built with `go test -c`
 *.test

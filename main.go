@@ -9,10 +9,17 @@ import (
 )
 
 func main() {
+	// Check for subcommand mode (librespot hook)
+	if len(os.Args) > 1 && os.Args[1] == "librespot-hook" {
+		runLibrespotSubcommand()
+		return
+	}
+
 	// Parse command-line flags
 	var (
 		inputDev    = flag.String("input", "/dev/input/event6", "Linux input event device for IR (e.g. /dev/input/event6)")
 		wsURL       = flag.String("ws", "ws://127.0.0.1:1234", "CamillaDSP websocket URL (CamillaDSP must be started with -pPORT)")
+		socketPath  = flag.String("socket", "/tmp/argon-camilladsp.sock", "Unix domain socket path for IPC")
 		minDB       = flag.Float64("min", -65.0, "Minimum volume clamp in dB")
 		maxDB       = flag.Float64("max", 0.0, "Maximum volume clamp in dB")
 		updateHz    = flag.Int("update-hz", defaultUpdateHz, "Update loop frequency in Hz")
@@ -72,12 +79,17 @@ func main() {
 	// Start daemon brain in a goroutine
 	go runDaemon(actions, ws, *wsURL, velState, *updateHz, *readTimeout, *verbose)
 
+	// Start IPC server
+	if err := runIPCServer(*socketPath, actions, *verbose); err != nil {
+		log.Fatalf("start IPC server: %v", err)
+	}
+
 	// Read loop for input events
 	events := make(chan inputEvent, 64)
 	readErr := make(chan error, 1)
 	go readInputEvents(f, events, readErr)
 
-	log.Printf("listening on %s, sending to %s (update rate: %d Hz)", *inputDev, *wsURL, *updateHz)
+	log.Printf("listening on %s, IPC on %s, sending to %s (update rate: %d Hz)", *inputDev, *socketPath, *wsURL, *updateHz)
 
 	// ============================================================================
 	// Main Event Loop - Input Coordination Only
@@ -142,5 +154,23 @@ func main() {
 				}
 			}
 		}
+	}
+}
+
+// runLibrespotSubcommand handles librespot-hook subcommand mode
+func runLibrespotSubcommand() {
+	// Create a new flagset for librespot subcommand
+	fs := flag.NewFlagSet("librespot-hook", flag.ExitOnError)
+	socketPath := fs.String("socket", "/tmp/argon-camilladsp.sock", "Unix domain socket path for IPC")
+	minDB := fs.Float64("min", -65.0, "Minimum volume clamp in dB")
+	maxDB := fs.Float64("max", 0.0, "Maximum volume clamp in dB")
+	verbose := fs.Bool("v", false, "Verbose logging")
+
+	// Parse flags (skip "librespot-hook" subcommand name)
+	fs.Parse(os.Args[2:])
+
+	// Run hook handler (reads from environment variables)
+	if err := runLibrespotHook(*socketPath, *minDB, *maxDB, *verbose); err != nil {
+		log.Fatalf("librespot hook error: %v", err)
 	}
 }

@@ -78,6 +78,36 @@ func handleAction(act Action, ws *wsClient, wsURL string, velState *velocityStat
 			return err
 		})
 
+	case LibrespotSessionConnected:
+		if verbose {
+			log.Printf("[ACTION] LibrespotSessionConnected: user=%s", a.UserName)
+		}
+		// No-op for now
+
+	case LibrespotSessionDisconnected:
+		if verbose {
+			log.Printf("[ACTION] LibrespotSessionDisconnected: user=%s", a.UserName)
+		}
+		// No-op for now
+
+	case LibrespotVolumeChanged:
+		if verbose {
+			log.Printf("[ACTION] LibrespotVolumeChanged: volume=%d", a.Volume)
+		}
+		// No-op for now (converted to SetVolumeAbsolute in librespot.go)
+
+	case LibrespotTrackChanged:
+		if verbose {
+			log.Printf("[ACTION] LibrespotTrackChanged: track=%s name=%s", a.TrackId, a.Name)
+		}
+		// No-op for now
+
+	case LibrespotPlaybackState:
+		if verbose {
+			log.Printf("[ACTION] LibrespotPlaybackState: state=%s track=%s", a.State, a.TrackId)
+		}
+		// No-op for now
+
 	default:
 		log.Printf("[WARN] Unknown action type: %T", act)
 	}
