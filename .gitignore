@@ -1,0 +1,84 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go build artifacts
+argon-camilladsp-remote
+/bin/
+/dist/
+/build/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace file
+go.work
+
+# Dependency directories (vendoring)
+vendor/
+
+# Go module cache
+go.sum.bak
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+
+# Debug and profiling files
+*.prof
+*.pprof
+cpu.prof
+mem.prof
+heap.prof
+profile.out
+trace.out
+
+# Temporary files
+*.tmp
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# OS-specific files
+Thumbs.db
+Desktop.ini
+
+# Build and release artifacts
+*.deb
+*.rpm
+*.tar.gz
+*.zip
+
+# Local configuration files (keep examples)
+*.local
+.env
+.env.local
+config.local.*
+
+# Test coverage reports
+coverage/
+
+# Benchmarks
+benchmarks/*.txt
+
+# Documentation build artifacts
+docs/_build/
+site/
+
+# Backup files
+*.bak
+*.backup
