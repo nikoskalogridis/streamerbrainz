@@ -22,12 +22,14 @@ A modular Go daemon that controls [CamillaDSP](https://github.com/HEnquist/camil
 
 ### Build
 
+#### Native Build
+
 ```bash
 # Build all binaries using Makefile (recommended)
 make
 
 # Or build manually
-go build -o bin/streamerbrainz .
+go build -o bin/streamerbrainz ./cmd/streamerbrainz
 go build -o bin/sbctl ./cmd/sbctl
 go build -o bin/ws_listen ./cmd/ws_listen
 
@@ -36,6 +38,75 @@ make clean
 ```
 
 All binaries are built to the `./bin` directory.
+
+#### Cross-Compilation with Docker (For Deployment)
+
+Build standalone binaries for multiple architectures without installing Go on target systems:
+
+```bash
+# Build for Raspberry Pi 4+ (ARM64)
+make build-binaries-arm64
+
+# Build for x86_64 servers
+make build-binaries-amd64
+
+# Build for all architectures
+make build-binaries-all
+
+# Or use the script directly
+./build-binaries.sh --arm64
+./build-binaries.sh --amd64
+./build-binaries.sh --all
+```
+
+**Output structure:**
+```
+bin/
+├── amd64/           # x86_64 binaries (compressed with UPX)
+│   ├── streamerbrainz
+│   ├── sbctl
+│   └── ws_listen
+└── arm64/           # ARM64 binaries for Raspberry Pi 4+
+    ├── streamerbrainz
+    ├── sbctl
+    └── ws_listen
+```
+
+**Deploy to Raspberry Pi:**
+```bash
+# Copy binaries to Raspberry Pi
+scp bin/arm64/* pi@raspberrypi:/usr/local/bin/
+
+# Or use rsync
+rsync -av bin/arm64/ pi@raspberrypi:/usr/local/bin/
+```
+
+**Features:**
+- ✅ Fully static binaries (no dependencies)
+- ✅ Compressed with UPX (~60% size reduction)
+- ✅ Ready to run on target systems
+- ✅ No Go installation required on targets
+
+#### Docker Build (For Containers)
+
+```bash
+# Build for current architecture
+make docker-build
+
+# Build for all architectures (amd64 + arm64)
+make docker-build-all
+
+# Build for Raspberry Pi 4+ (arm64)
+make docker-build-arm64
+
+# Build and push to registry
+make docker-push DOCKER_REGISTRY=ghcr.io/username
+
+# Or use the build script directly
+./docker-build.sh --all              # All architectures
+./docker-build.sh --arm64 --tag rpi4 # Raspberry Pi only
+./docker-build.sh --help             # Show all options
+```
 
 ### Run
 
@@ -60,10 +131,16 @@ sudo ./bin/streamerbrainz
 
 ### Prerequisites
 
-- Go 1.16+ (for building)
+#### For Native Build
+- Go 1.23+ (for building from source)
 - CamillaDSP running with WebSocket enabled (`-pPORT`)
 - IR input device (e.g., `/dev/input/event6`) for remote control
 - Linux kernel with evdev support
+
+#### For Docker Builds
+- Docker with buildx support
+- For multi-arch container builds: `docker buildx create --name multiarch --use`
+- For cross-compilation: Docker 20.10+ (buildx included)
 
 ### From Source
 
@@ -82,9 +159,88 @@ sudo cp bin/streamerbrainz /usr/local/bin/
 sudo cp bin/sbctl /usr/local/bin/
 ```
 
+### Docker Installation
+
+```bash
+# Pull pre-built image (if available)
+docker pull ghcr.io/username/streamerbrainz:latest
+
+# Or build locally
+make docker-build
+
+# Run with Docker
+docker run --rm \
+  --device /dev/input/event6:/dev/input/event6 \
+  --network host \
+  streamerbrainz:latest \
+  streamerbrainz -ir-device /dev/input/event6 -log-level info
+
+# Or use docker-compose
+docker-compose up -d
+
+# View logs
+docker-compose logs -f streamerbrainz
+```
+
 ---
 
 ## Usage
+
+### Docker Deployment
+
+#### Using Docker Run
+
+```bash
+# Basic usage with IR remote and CamillaDSP
+docker run -d \
+  --name streamerbrainz \
+  --restart unless-stopped \
+  --device /dev/input/event6:/dev/input/event6 \
+  --network host \
+  -v /tmp:/tmp \
+  streamerbrainz:latest \
+  streamerbrainz \
+    -ir-device /dev/input/event6 \
+    -camilladsp-ws-url ws://127.0.0.1:1234 \
+    -ipc-socket /tmp/streamerbrainz.sock \
+    -log-level info
+
+# With Plex integration
+docker run -d \
+  --name streamerbrainz \
+  --restart unless-stopped \
+  --device /dev/input/event6:/dev/input/event6 \
+  --network host \
+  -v /tmp:/tmp \
+  -v /path/to/plex-token:/run/secrets/plex-token:ro \
+  streamerbrainz:latest \
+  streamerbrainz \
+    -ir-device /dev/input/event6 \
+    -camilladsp-ws-url ws://127.0.0.1:1234 \
+    -plex-server-url http://plex.home.arpa:32400 \
+    -plex-token-file /run/secrets/plex-token \
+    -plex-machine-id YOUR_MACHINE_ID \
+    -log-level info
+```
+
+#### Using Docker Compose
+
+Edit `docker-compose.yml` to customize settings, then:
+
+```bash
+# Start services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f streamerbrainz
+
+# Stop services
+docker-compose down
+
+# Update and restart
+docker-compose pull
+docker-compose up -d
+```
 
 ### Daemon
 

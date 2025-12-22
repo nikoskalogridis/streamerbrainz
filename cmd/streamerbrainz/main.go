@@ -252,9 +252,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Setup webhook integrations
+	if plexEnabled {
+		if err := setupPlexWebhook(*plexServerUrl, *plexTokenFile, *plexMachineID, actions, logger); err != nil {
+			logger.Error("failed to setup Plex webhook", "error", err)
+			os.Exit(1)
+		}
+	}
+
 	// Start webhooks HTTP server
 	go func() {
-		if err := runWebhooksServer(*webhooksPort, plexEnabled, *plexServerUrl, *plexTokenFile, *plexMachineID, actions, logger); err != nil {
+		if err := runWebhooksServer(*webhooksPort, logger); err != nil {
 			logger.Error("webhooks server error", "error", err)
 		}
 	}()

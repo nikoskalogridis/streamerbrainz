@@ -181,37 +181,26 @@ func handlePlexWebhook(config PlexampConfig, actions chan<- Action, logger *slog
 	}
 }
 
-// runWebhooksServer starts the HTTP webhook server and optionally enables Plex integration
-func runWebhooksServer(port int, plexEnabled bool, plexServerUrl, plexTokenFile, plexMachineID string, actions chan<- Action, logger *slog.Logger) error {
-	// Setup Plex webhook if enabled
-	if plexEnabled {
-		// Load token from file
-		tokenBytes, err := os.ReadFile(plexTokenFile)
-		if err != nil {
-			return fmt.Errorf("failed to read plex token file: %w", err)
-		}
-		token := strings.TrimSpace(string(tokenBytes))
-		if token == "" {
-			return fmt.Errorf("plex token file is empty")
-		}
-
-		plexConfig := PlexampConfig{
-			ServerUrl:         plexServerUrl,
-			Token:             token,
-			MachineIdentifier: plexMachineID,
-		}
-
-		http.HandleFunc("/webhooks/plex", handlePlexWebhook(plexConfig, actions, logger))
-		logger.Info("Plex webhook enabled", "server", plexServerUrl, "machine_id", plexMachineID, "endpoint", "/webhooks/plex")
+// setupPlexWebhook registers the Plex webhook endpoint
+func setupPlexWebhook(serverUrl, tokenFile, machineID string, actions chan<- Action, logger *slog.Logger) error {
+	// Load token from file
+	tokenBytes, err := os.ReadFile(tokenFile)
+	if err != nil {
+		return fmt.Errorf("failed to read plex token file: %w", err)
+	}
+	token := strings.TrimSpace(string(tokenBytes))
+	if token == "" {
+		return fmt.Errorf("plex token file is empty")
 	}
 
-	// Start HTTP server
-	listenAddr := fmt.Sprintf(":%d", port)
-	logger.Info("webhooks server listening", "port", port)
-
-	if err := http.ListenAndServe(listenAddr, nil); err != nil {
-		return fmt.Errorf("HTTP server: %w", err)
+	plexConfig := PlexampConfig{
+		ServerUrl:         serverUrl,
+		Token:             token,
+		MachineIdentifier: machineID,
 	}
+
+	http.HandleFunc("/webhooks/plex", handlePlexWebhook(plexConfig, actions, logger))
+	logger.Info("Plex webhook enabled", "server", serverUrl, "machine_id", machineID, "endpoint", "/webhooks/plex")
 
 	return nil
 }

@@ -1,0 +1,88 @@
+# Ignore build outputs
+bin/
+builds/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Ignore test outputs
+*.test
+*.out
+coverage.txt
+coverage.html
+coverage/
+
+# Ignore Git
+.git/
+.gitignore
+.gitattributes
+
+# Ignore IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+
+# Ignore documentation build artifacts
+docs/_build/
+site/
+
+# Ignore temporary files
+*.tmp
+*.log
+*.pid
+*.seed
+*.pid.lock
+*.bak
+*.backup
+
+# Ignore OS-specific files
+Thumbs.db
+Desktop.ini
+
+# Ignore local configuration
+*.local
+.env
+.env.local
+config.local.*
+
+# Ignore vendored dependencies (will be downloaded during build)
+vendor/
+
+# Ignore CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Ignore Docker files (don't need in build context except Dockerfile itself)
+docker-compose.yml
+.dockerignore
+
+# Ignore development files
+Makefile
+*.md
+!README.md
+docs/
+examples/
+scripts/
+
+# Ignore profiling and debug files
+*.prof
+*.pprof
+cpu.prof
+mem.prof
+heap.prof
+profile.out
+trace.out
+
+# Keep only what's needed for build
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!pkg/

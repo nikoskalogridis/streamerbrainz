@@ -1,0 +1,131 @@
+# docker-compose.yml - StreamerBrainz Container Deployment
+#
+# This compose file provides different deployment scenarios for StreamerBrainz.
+#
+# Usage:
+#   docker-compose up -d                    # Start with default profile
+#   docker-compose --profile dev up -d      # Start with development profile
+#   docker-compose logs -f streamerbrainz   # View logs
+#   docker-compose down                     # Stop and remove containers
+
+services:
+  # Main StreamerBrainz daemon
+  streamerbrainz:
+    image: streamerbrainz:latest
+    container_name: streamerbrainz
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+    # Run as root to access input devices (required for IR remote)
+    user: root
+
+    # Network mode: host is recommended for accessing CamillaDSP WebSocket
+    network_mode: host
+
+    # Device access for IR remote control
+    devices:
+      - /dev/input/event6:/dev/input/event6
+
+    # Environment variables (customize as needed)
+    environment:
+      - TZ=UTC
+
+    # Command line arguments (customize for your setup)
+    command:
+      - streamerbrainz
+      - -ir-device
+      - /dev/input/event6
+      - -camilladsp-ws-url
+      - ws://127.0.0.1:1234
+      - -ipc-socket
+      - /tmp/streamerbrainz.sock
+      - -webhooks-port
+      - "3001"
+      - -log-level
+      - info
+
+    # Volumes
+    volumes:
+      # IPC socket shared with host
+      - /tmp:/tmp
+      # Optional: Plex token file
+      # - ./secrets/plex-token:/run/secrets/plex-token:ro
+
+    # Health check
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "sbctl",
+          "-ipc-socket",
+          "/tmp/streamerbrainz.sock",
+          "set-volume",
+          "-30.0",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    # Logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: CamillaDSP container (for testing)
+  camilladsp:
+    image: henquist/camilladsp:latest
+    container_name: camilladsp
+    profiles:
+      - dev
+      - test
+    restart: unless-stopped
+    network_mode: host
+    devices:
+      - /dev/snd:/dev/snd
+    volumes:
+      - ./config/camilladsp:/config
+    command:
+      - -p
+      - "1234"
+      - -a
+      - "0.0.0.0"
+      - /config/camilladsp.yml
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: Webhook listener for debugging Plex webhooks
+  webhook-debug:
+    image: streamerbrainz:latest
+    container_name: webhook-debug
+    profiles:
+      - debug
+    restart: "no"
+    ports:
+      - "3001:3001"
+    command:
+      - ws_listen
+      - -addr
+      - "0.0.0.0:3001"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Optional: Named volumes (if needed)
+volumes:
+  tmp:
+    driver: local
+
+# Networks (if not using host mode)
+networks:
+  streamerbrainz:
+    driver: bridge
