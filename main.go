@@ -12,7 +12,7 @@ import (
 const version = "1.0.0"
 
 func printVersion() {
-	fmt.Printf("argon-camilladsp-remote v%s\n", version)
+	fmt.Printf("StreamerBrainz v%s\n", version)
 	fmt.Println("IR remote control daemon for CamillaDSP volume control")
 }
 
@@ -20,8 +20,8 @@ func printUsage() {
 	printVersion()
 	fmt.Println()
 	fmt.Println("USAGE:")
-	fmt.Println("  argon-camilladsp-remote [OPTIONS]")
-	fmt.Println("  argon-camilladsp-remote librespot-hook [OPTIONS]")
+	fmt.Println("  streamerbrainz [OPTIONS]")
+	fmt.Println("  streamerbrainz librespot-hook [OPTIONS]")
 	fmt.Println()
 	fmt.Println("DESCRIPTION:")
 	fmt.Println("  Daemon that bridges IR remote control events (via Linux input devices)")
@@ -37,7 +37,7 @@ func printUsage() {
 	fmt.Println("        Note: CamillaDSP must be started with -pPORT option")
 	fmt.Println()
 	fmt.Println("  -socket string")
-	fmt.Printf("        Unix domain socket path for IPC (default \"/tmp/argon-camilladsp.sock\")\n")
+	fmt.Printf("        Unix domain socket path for IPC (default \"/tmp/streamerbrainz.sock\")\n")
 	fmt.Println()
 	fmt.Println("  -min float")
 	fmt.Printf("        Minimum volume clamp in dB (default -65.0)\n")
@@ -93,19 +93,19 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("EXAMPLES:")
 	fmt.Println("  # Start daemon with default settings")
-	fmt.Println("  argon-camilladsp-remote")
+	fmt.Println("  streamerbrainz")
 	fmt.Println()
 	fmt.Println("  # Custom input device and volume range")
-	fmt.Println("  argon-camilladsp-remote -input /dev/input/event4 -min -80 -max -10")
+	fmt.Println("  streamerbrainz -input /dev/input/event4 -min -80 -max -10")
 	fmt.Println()
 	fmt.Println("  # Connect to remote CamillaDSP instance")
-	fmt.Println("  argon-camilladsp-remote -ws ws://192.168.1.100:1234")
+	fmt.Println("  streamerbrainz -ws ws://192.168.1.100:1234")
 	fmt.Println()
 	fmt.Println("  # Enable Plexamp webhook integration")
-	fmt.Println("  argon-camilladsp-remote -plex-enabled -plex-token YOUR_TOKEN -plex-machine-id YOUR_ID")
+	fmt.Println("  streamerbrainz -plex-enabled -plex-token YOUR_TOKEN -plex-machine-id YOUR_ID")
 	fmt.Println()
 	fmt.Println("  # Use as librespot hook (add to librespot config)")
-	fmt.Println("  onevent = argon-camilladsp-remote librespot-hook")
+	fmt.Println("  onevent = streamerbrainz librespot-hook")
 	fmt.Println()
 	fmt.Println("NOTES:")
 	fmt.Println("  - Requires read access to input device (run as root or add user to 'input' group)")
@@ -138,7 +138,7 @@ func main() {
 	var (
 		inputDev      = flag.String("input", "/dev/input/event6", "Linux input event device for IR (e.g. /dev/input/event6)")
 		wsURL         = flag.String("ws", "ws://127.0.0.1:1234", "CamillaDSP websocket URL (CamillaDSP must be started with -pPORT)")
-		socketPath    = flag.String("socket", "/tmp/argon-camilladsp.sock", "Unix domain socket path for IPC")
+		socketPath    = flag.String("socket", "/tmp/streamerbrainz.sock", "Unix domain socket path for IPC")
 		minDB         = flag.Float64("min", -65.0, "Minimum volume clamp in dB")
 		maxDB         = flag.Float64("max", 0.0, "Maximum volume clamp in dB")
 		updateHz      = flag.Int("update-hz", defaultUpdateHz, "Update loop frequency in Hz")
@@ -288,7 +288,7 @@ func main() {
 	readErr := make(chan error, 1)
 	go readInputEvents(f, events, readErr)
 
-	logger.Debug("starting argon-camilladsp-remote", "version", version)
+	logger.Debug("starting streamerbrainz", "version", version)
 	logger.Debug("configuration",
 		"input_device", *inputDev,
 		"websocket_url", *wsURL,
@@ -374,19 +374,19 @@ func main() {
 }
 
 func printLibrespotHookUsage() {
-	fmt.Printf("argon-camilladsp-remote librespot-hook v%s\n", version)
+	fmt.Printf("StreamerBrainz librespot-hook v%s\n", version)
 	fmt.Println()
 	fmt.Println("USAGE:")
-	fmt.Println("  argon-camilladsp-remote librespot-hook [OPTIONS]")
+	fmt.Println("  streamerbrainz librespot-hook [OPTIONS]")
 	fmt.Println()
 	fmt.Println("DESCRIPTION:")
-	fmt.Println("  Librespot event hook that communicates with the argon-camilladsp-remote")
+	fmt.Println("  Librespot event hook that communicates with the StreamerBrainz")
 	fmt.Println("  daemon via Unix socket. Reads PLAYER_EVENT environment variable to")
 	fmt.Println("  handle playback events (start/stop/playing/paused/changed).")
 	fmt.Println()
 	fmt.Println("OPTIONS:")
 	fmt.Println("  -socket string")
-	fmt.Println("        Unix domain socket path for IPC (default \"/tmp/argon-camilladsp.sock\")")
+	fmt.Println("        Unix domain socket path for IPC (default \"/tmp/streamerbrainz.sock\")")
 	fmt.Println()
 	fmt.Println("  -min float")
 	fmt.Println("        Minimum volume clamp in dB (default -65.0)")
@@ -401,7 +401,7 @@ func printLibrespotHookUsage() {
 	fmt.Println()
 	fmt.Println("EXAMPLE:")
 	fmt.Println("  Add to librespot configuration:")
-	fmt.Println("  onevent = /usr/local/bin/argon-camilladsp-remote librespot-hook")
+	fmt.Println("  onevent = /usr/local/bin/streamerbrainz librespot-hook")
 	fmt.Println()
 }
 
@@ -409,7 +409,7 @@ func printLibrespotHookUsage() {
 func runLibrespotSubcommand() {
 	// Create a new flagset for librespot subcommand
 	fs := flag.NewFlagSet("librespot-hook", flag.ExitOnError)
-	socketPath := fs.String("socket", "/tmp/argon-camilladsp.sock", "Unix domain socket path for IPC")
+	socketPath := fs.String("socket", "/tmp/streamerbrainz.sock", "Unix domain socket path for IPC")
 	verbose := fs.Bool("v", false, "Verbose logging")
 	showHelp := fs.Bool("help", false, "Print help message")
 

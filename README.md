@@ -1,4 +1,4 @@
-# argon-camilladsp-remote
+# StreamerBrainz
 
 **Multi-source volume controller for CamillaDSP with velocity-based control**
 
@@ -27,8 +27,8 @@ A modular Go daemon that controls [CamillaDSP](https://github.com/HEnquist/camil
 make
 
 # Or build manually
-go build -o builds/argon-camilladsp-remote .
-go build -o builds/argon-ctl ./cmd/argon-ctl
+go build -o builds/streamerbrainz .
+go build -o builds/sbctl ./cmd/sbctl
 go build -o builds/ws_listen ./cmd/ws_listen
 
 # Clean build artifacts
@@ -41,17 +41,17 @@ All binaries are built to the `./builds` directory.
 
 ```bash
 # Show help and all available options
-./builds/argon-camilladsp-remote -help
+./builds/streamerbrainz -help
 
 # Show version
-./builds/argon-camilladsp-remote -version
+./builds/streamerbrainz -version
 
 # Start the daemon (requires root for IR input)
-sudo ./builds/argon-camilladsp-remote
+sudo ./builds/streamerbrainz
 
 # Control volume via CLI
-./builds/argon-ctl mute
-./builds/argon-ctl set-volume -30.0
+./builds/sbctl mute
+./builds/sbctl set-volume -30.0
 ```
 
 ---
@@ -69,7 +69,7 @@ sudo ./builds/argon-camilladsp-remote
 
 ```bash
 git clone <repository-url>
-cd argon-camilladsp-remote
+cd streamerbrainz
 
 # Build all binaries
 make
@@ -78,8 +78,8 @@ make
 sudo make install
 
 # Or manually
-sudo cp builds/argon-camilladsp-remote /usr/local/bin/
-sudo cp builds/argon-ctl /usr/local/bin/
+sudo cp builds/streamerbrainz /usr/local/bin/
+sudo cp builds/sbctl /usr/local/bin/
 ```
 
 ---
@@ -90,31 +90,31 @@ sudo cp builds/argon-ctl /usr/local/bin/
 
 ```bash
 # Show comprehensive help
-argon-camilladsp-remote -help
+streamerbrainz -help
 
 # Show version
-argon-camilladsp-remote -version
+streamerbrainz -version
 
 # Basic usage
-sudo argon-camilladsp-remote
+sudo streamerbrainz
 
 # Custom configuration
-sudo argon-camilladsp-remote \
+sudo streamerbrainz \
   -input /dev/input/event6 \
   -ws ws://127.0.0.1:1234 \
-  -socket /tmp/argon.sock \
+  -socket /tmp/streamerbrainz.sock \
   -min -65.0 \
   -max 0.0 \
   -v
 
 # Run with verbose logging to see all parameters
-sudo argon-camilladsp-remote -v
+sudo streamerbrainz -v
 ```
 
 **Command-line flags:**
 - `-input string` - Linux input event device for IR (default: `/dev/input/event6`)
 - `-ws string` - CamillaDSP WebSocket URL (default: `ws://127.0.0.1:1234`)
-- `-socket string` - Unix domain socket path for IPC (default: `/tmp/argon-camilladsp.sock`)
+- `-socket string` - Unix domain socket path for IPC (default: `/tmp/streamerbrainz.sock`)
 - `-min float` - Minimum volume in dB (default: `-65.0`)
 - `-max float` - Maximum volume in dB (default: `0.0`)
 - `-update-hz int` - Update loop frequency in Hz (default: `30`)
@@ -126,33 +126,33 @@ sudo argon-camilladsp-remote -v
 - `-version` - Print version and exit
 - `-help` - Print comprehensive help message
 
-Run `argon-camilladsp-remote -help` for detailed usage examples and notes.
+Run `streamerbrainz -help` for detailed usage examples and notes.
 
-### CLI Tool (argon-ctl)
+### CLI Tool (sbctl)
 
 ```bash
 # Toggle mute
-argon-ctl mute
+sbctl mute
 
 # Set absolute volume
-argon-ctl set-volume -30.0
-argon-ctl set -25.5
+sbctl set-volume -30.0
+sbctl set -25.5
 
 # Simulate IR button presses
-argon-ctl volume-up
-argon-ctl volume-down
-argon-ctl release
+sbctl volume-up
+sbctl volume-down
+sbctl release
 
 # Use custom socket
-argon-ctl -socket /tmp/argon.sock mute
+sbctl -socket /tmp/streamerbrainz.sock mute
 ```
 
 ### Python API
 
 ```python
-from examples.python_client import ArgonClient
+from examples.python_client import StreamerBrainzClient
 
-client = ArgonClient()
+client = StreamerBrainzClient()
 client.toggle_mute()
 client.set_volume(-30.0)
 client.volume_up()
@@ -167,28 +167,28 @@ client.release()
 ./examples/bash_client.sh set -30.0
 
 # Or use raw JSON
-echo '{"type":"toggle_mute"}' | nc -U /tmp/argon-camilladsp.sock
+echo '{"type":"toggle_mute"}' | nc -U /tmp/streamerbrainz.sock
 ```
 
 ### Librespot (Spotify Connect)
 
 ```bash
 # Show librespot-hook help
-argon-camilladsp-remote librespot-hook -help
+streamerbrainz librespot-hook -help
 
 # Configure librespot to use the hook
-librespot --onevent argon-camilladsp-remote librespot-hook ...
+librespot --onevent streamerbrainz librespot-hook ...
 
 # Test manually with environment variables
-PLAYER_EVENT=volume_changed VOLUME=32768 ./argon-camilladsp-remote librespot-hook -v
-PLAYER_EVENT=playing TRACK_ID=test ./argon-camilladsp-remote librespot-hook -v
+PLAYER_EVENT=volume_changed VOLUME=32768 ./streamerbrainz librespot-hook -v
+PLAYER_EVENT=playing TRACK_ID=test ./streamerbrainz librespot-hook -v
 
 # Use custom socket
-PLAYER_EVENT=playing ./argon-camilladsp-remote librespot-hook -socket /tmp/custom.sock
+PLAYER_EVENT=playing ./streamerbrainz librespot-hook -socket /tmp/custom.sock
 ```
 
 **Librespot hook options:**
-- `-socket string` - Unix domain socket path for IPC (default: `/tmp/argon-camilladsp.sock`)
+- `-socket string` - Unix domain socket path for IPC (default: `/tmp/streamerbrainz.sock`)
 - `-min float` - Minimum volume clamp in dB (default: `-65.0`)
 - `-max float` - Maximum volume clamp in dB (default: `0.0`)
 - `-v` - Enable verbose logging
@@ -200,14 +200,14 @@ The main daemon can integrate with Plex Media Server by enabling webhook support
 
 ```bash
 # Start daemon with Plexamp webhook integration
-argon-camilladsp-remote \
+streamerbrainz \
   -plex-enabled \
   -plex-host plex.home.arpa:32400 \
   -plex-token YOUR_PLEX_TOKEN \
   -plex-machine-id YOUR_MACHINE_IDENTIFIER
 
 # With custom webhook port and verbose logging
-argon-camilladsp-remote \
+streamerbrainz \
   -plex-enabled \
   -plex-listen :8080 \
   -plex-host 192.168.1.100:32400 \
@@ -250,7 +250,7 @@ argon-camilladsp-remote \
 └─────────────┘  │
                  │
 ┌─────────────┐  │     ┌─────────────┐     ┌──────────────┐
-│  argon-ctl  │──┼────▶│   Actions   │────▶│    Daemon    │
+│    sbctl    │──┼────▶│   Actions   │────▶│    Daemon    │
 └─────────────┘  │     │   Channel   │     │     Loop     │
                  │     └─────────────┘     └──────┬───────┘
 ┌─────────────┐  │                                │
@@ -338,7 +338,7 @@ Error:
 ### Project Structure
 
 ```
-argon-camilladsp-remote/
+streamerbrainz/
 ├── main.go           # Entry point, main event loop, and help system
 ├── daemon.go         # Central daemon loop
 ├── actions.go        # Action types and JSON encoding
@@ -352,11 +352,11 @@ argon-camilladsp-remote/
 ├── constants.go      # Configuration constants
 ├── Makefile          # Build system
 ├── builds/           # Compiled binaries (created by make)
-│   ├── argon-camilladsp-remote
-│   ├── argon-ctl
+│   ├── streamerbrainz
+│   ├── sbctl
 │   └── ws_listen
 ├── cmd/
-│   ├── argon-ctl/    # CLI tool
+│   ├── sbctl/        # CLI tool
 │   └── ws_listen/    # WebSocket listener example
 ├── examples/
 │   ├── python_client.py
@@ -400,10 +400,10 @@ case MyAction:
 
 ```bash
 # Show help to verify parameters
-./builds/argon-camilladsp-remote -help
+./builds/streamerbrainz -help
 
 # Check if socket already exists
-rm -f /tmp/argon-camilladsp.sock
+rm -f /tmp/streamerbrainz.sock
 
 # Check IR device permissions
 sudo chmod 666 /dev/input/event6
@@ -411,20 +411,20 @@ sudo chmod 666 /dev/input/event6
 sudo usermod -a -G input $USER
 
 # Run with verbose logging to see configuration
-sudo ./builds/argon-camilladsp-remote -v
+sudo ./builds/streamerbrainz -v
 ```
 
 ### IPC connection refused
 
 ```bash
 # Check if daemon is running
-ps aux | grep argon
+ps aux | grep streamerbrainz
 
 # Check socket exists
-ls -l /tmp/argon-camilladsp.sock
+ls -l /tmp/streamerbrainz.sock
 
 # Enable verbose logging
-sudo ./argon-camilladsp-remote -v
+sudo ./streamerbrainz -v
 ```
 
 ### Volume not changing
@@ -434,7 +434,7 @@ sudo ./argon-camilladsp-remote -v
 curl http://127.0.0.1:1234/api/v1/status
 
 # Check WebSocket URL
-sudo ./argon-camilladsp-remote -ws ws://127.0.0.1:1234 -v
+sudo ./streamerbrainz -ws ws://127.0.0.1:1234 -v
 ```
 
 ---

@@ -12,7 +12,7 @@ import (
 // ============================================================================
 // This module parses librespot onevent hooks and converts them to actions.
 // librespot passes events via environment variables.
-// Usage: argon-camilladsp-remote librespot-hook
+// Usage: streamerbrainz librespot-hook
 // ============================================================================
 
 const (

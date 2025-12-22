@@ -1,4 +1,4 @@
-module argon-camilladsp-remote
+module streamerbrainz
 
 go 1.25.5
 

@@ -17,7 +17,7 @@ import (
 // /status/sessions endpoint to get detailed track information, filtering
 // by machineIdentifier to find the correct player.
 //
-// Usage: argon-camilladsp-remote plexamp-webhook [OPTIONS]
+// Usage: streamerbrainz plexamp-webhook [OPTIONS]
 // ============================================================================
 
 // PlexMediaContainer represents the root XML response from Plex API

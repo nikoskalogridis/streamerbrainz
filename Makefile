@@ -4,8 +4,8 @@
 BUILD_DIR := ./builds
 
 # Binary names
-DAEMON_BIN := argon-camilladsp-remote
-CTL_BIN := argon-ctl
+DAEMON_BIN := streamerbrainz
+CTL_BIN := sbctl
 LISTEN_BIN := ws_listen
 
 # Go build flags
@@ -23,9 +23,9 @@ $(BUILD_DIR):
 $(BUILD_DIR)/$(DAEMON_BIN): $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(DAEMON_BIN) .
 
-# Build argon-ctl utility
+# Build sbctl utility
 $(BUILD_DIR)/$(CTL_BIN): $(BUILD_DIR)
-	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(CTL_BIN) ./cmd/argon-ctl
+	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(CTL_BIN) ./cmd/sbctl
 
 # Build ws_listen example
 $(BUILD_DIR)/$(LISTEN_BIN): $(BUILD_DIR)
@@ -35,7 +35,7 @@ $(BUILD_DIR)/$(LISTEN_BIN): $(BUILD_DIR)
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -f $(DAEMON_BIN) $(CTL_BIN)
-	rm -f cmd/argon-ctl/$(CTL_BIN)
+	rm -f cmd/sbctl/$(CTL_BIN)
 	rm -f cmd/ws_listen/$(LISTEN_BIN)
 
 # Install binaries to /usr/local/bin (requires sudo)

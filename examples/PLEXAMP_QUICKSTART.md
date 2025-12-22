@@ -6,7 +6,7 @@ Get Plexamp webhook integration running in 5 minutes.
 
 ## Prerequisites
 
-- argon-camilladsp-remote daemon installed
+- StreamerBrainz daemon installed
 - Plex Media Server running
 - Plexamp player active
 - `curl` for testing (optional)
@@ -50,7 +50,7 @@ Copy the **Machine ID**.
 ## 3. Start the Daemon
 
 ```bash
-sudo argon-camilladsp-remote \
+sudo streamerbrainz \
   -plex-enabled \
   -plex-host plex.home.arpa:32400 \
   -plex-token YOUR_PLEX_TOKEN \
@@ -85,16 +85,16 @@ For production use, store your token securely with systemd encrypted credentials
 cat examples/SETUP_CREDENTIALS.md
 
 # Quick version:
-mkdir -p ~/.config/argon-camilladsp
+mkdir -p ~/.config/streamerbrainz
 echo -n "YOUR_PLEX_TOKEN" | \
   systemd-creds encrypt --name=plex-token - - > \
-  ~/.config/argon-camilladsp/plex-token.cred
-chmod 600 ~/.config/argon-camilladsp/plex-token.cred
+  ~/.config/streamerbrainz/plex-token.cred
+chmod 600 ~/.config/streamerbrainz/plex-token.cred
 
 # Then use the service file which references the credential
-cp examples/argon-camilladsp-remote-plex.service ~/.config/systemd/user/
+cp examples/streamerbrainz-plex.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now argon-camilladsp-remote-plex
+systemctl --user enable --now streamerbrainz-plex
 ```
 
 See `examples/SETUP_CREDENTIALS.md` for full instructions.
@@ -148,28 +148,28 @@ The example service file uses systemd encrypted credentials for security.
 
 ```bash
 # 1. Encrypt your Plex token
-mkdir -p ~/.config/argon-camilladsp
+mkdir -p ~/.config/streamerbrainz
 echo -n "YOUR_PLEX_TOKEN" | \
   systemd-creds encrypt --name=plex-token - - > \
-  ~/.config/argon-camilladsp/plex-token.cred
-chmod 600 ~/.config/argon-camilladsp/plex-token.cred
+  ~/.config/streamerbrainz/plex-token.cred
+chmod 600 ~/.config/streamerbrainz/plex-token.cred
 
 # 2. Install user service
 mkdir -p ~/.config/systemd/user
-cp examples/argon-camilladsp-remote-plex.service ~/.config/systemd/user/
+cp examples/streamerbrainz-plex.service ~/.config/systemd/user/
 
 # 3. Edit service file (update machine ID, etc.)
-nano ~/.config/systemd/user/argon-camilladsp-remote-plex.service
+nano ~/.config/systemd/user/streamerbrainz-plex.service
 
 # 4. Enable and start
 systemctl --user daemon-reload
-systemctl --user enable --now argon-camilladsp-remote-plex
+systemctl --user enable --now streamerbrainz-plex
 
 # 5. Check status
-systemctl --user status argon-camilladsp-remote-plex
+systemctl --user status streamerbrainz-plex
 
 # 6. View logs
-journalctl --user -u argon-camilladsp-remote-plex -f
+journalctl --user -u streamerbrainz-plex -f
 ```
 
 **Detailed guide:** See `examples/SETUP_CREDENTIALS.md`
@@ -180,10 +180,10 @@ journalctl --user -u argon-camilladsp-remote-plex -f
 
 ```bash
 # Full example with all common options
-argon-camilladsp-remote \
+streamerbrainz \
   -input /dev/input/event6 \
   -ws ws://127.0.0.1:1234 \
-  -socket /tmp/argon-camilladsp.sock \
+  -socket /tmp/streamerbrainz.sock \
   -min -65.0 \
   -max 0.0 \
   -plex-enabled \
@@ -194,10 +194,10 @@ argon-camilladsp-remote \
   -v
 
 # Or with token file (more secure):
-argon-camilladsp-remote \
+streamerbrainz \
   -input /dev/input/event6 \
   -ws ws://127.0.0.1:1234 \
-  -socket /tmp/argon-camilladsp.sock \
+  -socket /tmp/streamerbrainz.sock \
   -min -65.0 \
   -max 0.0 \
   -plex-enabled \
@@ -253,7 +253,7 @@ See `docs/plexamp-integration.md` for detailed documentation.
 
 - Full docs: `docs/plexamp-integration.md`
 - Credential setup: `examples/SETUP_CREDENTIALS.md`
-- General help: `argon-camilladsp-remote -help`
+- General help: `streamerbrainz -help`
 - Machine ID helper: `./examples/get-plex-machine-id.sh -h`
 
 **Common issues:**

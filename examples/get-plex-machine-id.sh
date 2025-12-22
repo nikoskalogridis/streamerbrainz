@@ -143,9 +143,9 @@ while IFS= read -r line; do
 done <<< "$response"
 
 echo ""
-log_info "To use with argon-camilladsp-remote:"
+log_info "To use with StreamerBrainz:"
 echo ""
-echo -e "${YELLOW}argon-camilladsp-remote \\"
+echo -e "${YELLOW}streamerbrainz \\"
 echo "  -plex-enabled \\"
 echo "  -plex-host ${PLEX_HOST} \\"
 echo "  -plex-token ${PLEX_TOKEN} \\"

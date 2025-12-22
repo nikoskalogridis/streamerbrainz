@@ -30,14 +30,14 @@ See the [Plexamp Quick Start](PLEXAMP_QUICKSTART.md#1-get-your-plex-token) guide
 ### 2. Create Credential Directory
 
 ```bash
-mkdir -p ~/.config/argon-camilladsp
+mkdir -p ~/.config/streamerbrainz
 ```
 
 ### 3. Encrypt Your Token
 
 ```bash
 # Interactive method (recommended)
-systemd-creds encrypt --name=plex-token - - > ~/.config/argon-camilladsp/plex-token.cred
+systemd-creds encrypt --name=plex-token - - > ~/.config/streamerbrainz/plex-token.cred
 ```
 
 When prompted, paste your Plex token and press `Ctrl+D`.
@@ -46,24 +46,24 @@ When prompted, paste your Plex token and press `Ctrl+D`.
 
 ```bash
 echo -n "YOUR_PLEX_TOKEN_HERE" | \
-  systemd-creds encrypt --name=plex-token - - > ~/.config/argon-camilladsp/plex-token.cred
+  systemd-creds encrypt --name=plex-token - - > ~/.config/streamerbrainz/plex-token.cred
 ```
 
 ### 4. Verify the Credential
 
 ```bash
 # Check the file was created
-ls -lh ~/.config/argon-camilladsp/plex-token.cred
+ls -lh ~/.config/streamerbrainz/plex-token.cred
 
 # Test decryption (requires systemd v252+)
-systemd-creds decrypt ~/.config/argon-camilladsp/plex-token.cred
+systemd-creds decrypt ~/.config/streamerbrainz/plex-token.cred
 ```
 
 ### 5. Secure the Credential File
 
 ```bash
 # Set restrictive permissions
-chmod 600 ~/.config/argon-camilladsp/plex-token.cred
+chmod 600 ~/.config/streamerbrainz/plex-token.cred
 ```
 
 ---
@@ -77,10 +77,10 @@ The example service file is already configured:
 PrivateMounts=yes
 
 # Load encrypted credential from your home directory
-LoadCredentialEncrypted=plex-token:%h/.config/argon-camilladsp/plex-token.cred
+LoadCredentialEncrypted=plex-token:%h/.config/streamerbrainz/plex-token.cred
 
 # Pass the credential directory path (%d) to the program
-ExecStart=%h/.local/bin/argon-camilladsp-remote \
+ExecStart=%h/.local/bin/streamerbrainz \
     -plex-token-file=%d/plex-token \
     ...
 ```
@@ -97,22 +97,22 @@ ExecStart=%h/.local/bin/argon-camilladsp-remote \
 ```bash
 # Copy the service file
 mkdir -p ~/.config/systemd/user
-cp examples/argon-camilladsp-remote-plex.service ~/.config/systemd/user/
+cp examples/streamerbrainz-plex.service ~/.config/systemd/user/
 
 # Edit if needed (change machine ID, ports, etc.)
-nano ~/.config/systemd/user/argon-camilladsp-remote-plex.service
+nano ~/.config/systemd/user/streamerbrainz-plex.service
 
 # Reload systemd
 systemctl --user daemon-reload
 
 # Enable and start
-systemctl --user enable --now argon-camilladsp-remote-plex
+systemctl --user enable --now streamerbrainz-plex
 
 # Check status
-systemctl --user status argon-camilladsp-remote-plex
+systemctl --user status streamerbrainz-plex
 
 # View logs
-journalctl --user -u argon-camilladsp-remote-plex -f
+journalctl --user -u streamerbrainz-plex -f
 ```
 
 ---
@@ -123,23 +123,23 @@ If you're on an older systemd version without encrypted credentials support:
 
 ```bash
 # Create token file
-echo -n "YOUR_PLEX_TOKEN_HERE" > ~/.config/argon-camilladsp/plex-token
+echo -n "YOUR_PLEX_TOKEN_HERE" > ~/.config/streamerbrainz/plex-token
 
 # Secure it
-chmod 600 ~/.config/argon-camilladsp/plex-token
+chmod 600 ~/.config/streamerbrainz/plex-token
 ```
 
 **Update service file:**
 
 ```ini
 # Remove LoadCredentialEncrypted
-# LoadCredentialEncrypted=plex-token:%h/.config/argon-camilladsp/plex-token.cred
+# LoadCredentialEncrypted=plex-token:%h/.config/streamerbrainz/plex-token.cred
 
 # Use LoadCredential instead
-LoadCredential=plex-token:%h/.config/argon-camilladsp/plex-token
+LoadCredential=plex-token:%h/.config/streamerbrainz/plex-token
 
 # The rest stays the same
-ExecStart=%h/.local/bin/argon-camilladsp-remote \
+ExecStart=%h/.local/bin/streamerbrainz \
     -plex-token-file=%d/plex-token \
     ...
 ```
@@ -151,12 +151,12 @@ ExecStart=%h/.local/bin/argon-camilladsp-remote \
 ### "Failed to decrypt credential"
 
 - **Check systemd version:** `systemd --version` (need v250+)
-- **Verify file exists:** `ls -l ~/.config/argon-camilladsp/plex-token.cred`
-- **Test decryption manually:** `systemd-creds decrypt ~/.config/argon-camilladsp/plex-token.cred`
+- **Verify file exists:** `ls -l ~/.config/streamerbrainz/plex-token.cred`
+- **Test decryption manually:** `systemd-creds decrypt ~/.config/streamerbrainz/plex-token.cred`
 
 ### "Failed to read plex token file"
 
-- **Check service logs:** `journalctl --user -u argon-camilladsp-remote-plex -n 50`
+- **Check service logs:** `journalctl --user -u streamerbrainz-plex -n 50`
 - **Verify LoadCredentialEncrypted is correct** in service file
 - **Check %d expansion:** Add `Environment="DEBUG=1"` to service and check if path is correct
 
@@ -169,8 +169,8 @@ ExecStart=%h/.local/bin/argon-camilladsp-remote \
 
 ```bash
 # Fix credential file permissions
-chmod 600 ~/.config/argon-camilladsp/plex-token.cred
-chown $USER:$USER ~/.config/argon-camilladsp/plex-token.cred
+chmod 600 ~/.config/streamerbrainz/plex-token.cred
+chown $USER:$USER ~/.config/streamerbrainz/plex-token.cred
 ```
 
 ---
@@ -198,14 +198,14 @@ If your Plex token changes:
 
 ```bash
 # Stop the service
-systemctl --user stop argon-camilladsp-remote-plex
+systemctl --user stop streamerbrainz-plex
 
 # Re-encrypt new token
 echo -n "NEW_PLEX_TOKEN" | \
-  systemd-creds encrypt --name=plex-token - - > ~/.config/argon-camilladsp/plex-token.cred
+  systemd-creds encrypt --name=plex-token - - > ~/.config/streamerbrainz/plex-token.cred
 
 # Restart service
-systemctl --user restart argon-camilladsp-remote-plex
+systemctl --user restart streamerbrainz-plex
 ```
 
 ---
@@ -223,29 +223,29 @@ read -sp "Enter your Plex token: " PLEX_TOKEN
 echo
 
 # Create directory
-mkdir -p ~/.config/argon-camilladsp
+mkdir -p ~/.config/streamerbrainz
 
 # Encrypt and save
 echo -n "$PLEX_TOKEN" | \
   systemd-creds encrypt --name=plex-token - - > \
-  ~/.config/argon-camilladsp/plex-token.cred
+  ~/.config/streamerbrainz/plex-token.cred
 
 # Secure it
-chmod 600 ~/.config/argon-camilladsp/plex-token.cred
+chmod 600 ~/.config/streamerbrainz/plex-token.cred
 
 echo "✓ Credential encrypted and saved"
-echo "  Location: ~/.config/argon-camilladsp/plex-token.cred"
+echo "  Location: ~/.config/streamerbrainz/plex-token.cred"
 
 # Test decryption
 echo -n "Testing decryption... "
-systemd-creds decrypt ~/.config/argon-camilladsp/plex-token.cred > /dev/null
+systemd-creds decrypt ~/.config/streamerbrainz/plex-token.cred > /dev/null
 echo "✓ OK"
 
 echo ""
 echo "Now install the service:"
-echo "  cp examples/argon-camilladsp-remote-plex.service ~/.config/systemd/user/"
+echo "  cp examples/streamerbrainz-plex.service ~/.config/systemd/user/"
 echo "  systemctl --user daemon-reload"
-echo "  systemctl --user enable --now argon-camilladsp-remote-plex"
+echo "  systemctl --user enable --now streamerbrainz-plex"
 ```
 
 ---

@@ -57,7 +57,7 @@ This keeps the logs clean while preserving all volume control functionality.
 - Velocity-based volume control with physics simulation
 - WebSocket communication with CamillaDSP
 - IPC server for multi-source control
-- `argon-ctl` CLI utility
+- `sbctl` CLI utility
 - Librespot integration for Spotify Connect
 - Automatic WebSocket reconnection
 - Volume safety limits and safety zone

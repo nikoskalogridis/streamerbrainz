@@ -1,6 +1,6 @@
 # Plexamp Integration Implementation Summary
 
-This document summarizes the implementation of Plexamp/Plex Media Server webhook integration into argon-camilladsp-remote.
+This document summarizes the implementation of Plexamp/Plex Media Server webhook integration into StreamerBrainz.
 
 ---
 
@@ -32,7 +32,7 @@ The Plexamp integration adds webhook support directly to the main daemon, allowi
    - Shows machine identifiers
    - Displays current playback info
 
-3. **`examples/argon-camilladsp-remote-plex.service`** - Systemd user service
+3. **`examples/streamerbrainz-plex.service`** - Systemd user service
    - Uses `LoadCredentialEncrypted` for token security
    - Configured for user service (`~/.config/systemd/user/`)
    - PrivateMounts for credential isolation
@@ -131,10 +131,10 @@ type PlexStateChanged struct {
 
 ```ini
 # Encrypted credential storage
-LoadCredentialEncrypted=plex-token:%h/.config/argon-camilladsp/plex-token.cred
+LoadCredentialEncrypted=plex-token:%h/.config/streamerbrainz/plex-token.cred
 
 # Pass credential path to daemon
-ExecStart=%h/.local/bin/argon-camilladsp-remote \
+ExecStart=%h/.local/bin/streamerbrainz \
     -plex-token-file=%d/plex-token \
     ...
 ```
@@ -169,9 +169,9 @@ ExecStart=%h/.local/bin/argon-camilladsp-remote \
 
 1. Get Plex token from Plex Web App
 2. Find machine ID: `./examples/get-plex-machine-id.sh plex.home.arpa:32400 TOKEN`
-3. Encrypt token: `systemd-creds encrypt --name=plex-token - - > ~/.config/argon-camilladsp/plex-token.cred`
-4. Install service: `cp examples/argon-camilladsp-remote-plex.service ~/.config/systemd/user/`
-5. Start: `systemctl --user enable --now argon-camilladsp-remote-plex`
+3. Encrypt token: `systemd-creds encrypt --name=plex-token - - > ~/.config/streamerbrainz/plex-token.cred`
+4. Install service: `cp examples/streamerbrainz-plex.service ~/.config/systemd/user/`
+5. Start: `systemctl --user enable --now streamerbrainz-plex`
 
 ### Production Setup
 
@@ -185,7 +185,7 @@ See `examples/SETUP_CREDENTIALS.md` for complete instructions.
 
 ```bash
 # Start daemon with Plex enabled
-argon-camilladsp-remote \
+streamerbrainz \
   -plex-enabled \
   -plex-token YOUR_TOKEN \
   -plex-machine-id YOUR_MACHINE_ID \
@@ -297,7 +297,7 @@ Systemd credentials:
 ## Files Overview
 
 ```
-argon-camilladsp-remote/
+streamerbrainz/
 ├── plexamp.go                                 # NEW: Core integration
 ├── actions.go                                 # MODIFIED: Added PlexStateChanged
 ├── daemon.go                                  # MODIFIED: Handle PlexStateChanged
@@ -307,7 +307,7 @@ argon-camilladsp-remote/
 │   └── plexamp-integration.md                # NEW: Detailed docs
 └── examples/
     ├── get-plex-machine-id.sh                # NEW: Discovery helper
-    ├── argon-camilladsp-remote-plex.service  # NEW: Systemd service
+    ├── streamerbrainz-plex.service          # NEW: Systemd service
     ├── SETUP_CREDENTIALS.md                  # NEW: Credential setup guide
     └── PLEXAMP_QUICKSTART.md                 # NEW: Quick start guide
 ```
@@ -343,19 +343,19 @@ argon-camilladsp-remote/
 
 ```bash
 # Development (token in command line)
-argon-camilladsp-remote \
+streamerbrainz \
   -plex-enabled \
   -plex-token abc123xyz \
   -plex-machine-id bc97b983-8169-47e3-bbcc-54a12d662546
 
 # Production (token from file)
-argon-camilladsp-remote \
+streamerbrainz \
   -plex-enabled \
   -plex-token-file=/run/credentials/plex-token \
   -plex-machine-id bc97b983-8169-47e3-bbcc-54a12d662546
 
 # Custom webhook port
-argon-camilladsp-remote \
+streamerbrainz \
   -plex-enabled \
   -plex-listen :9000 \
   -plex-host 192.168.1.100:32400 \

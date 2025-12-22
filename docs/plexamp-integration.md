@@ -1,12 +1,12 @@
 # Plexamp/Plex Integration Guide
 
-This guide explains how to integrate argon-camilladsp-remote with Plex Media Server and Plexamp to track playback events and potentially trigger actions based on playback state.
+This guide explains how to integrate StreamerBrainz with Plex Media Server and Plexamp to track playback events and potentially trigger actions based on playback state.
 
 ---
 
 ## Overview
 
-The Plexamp integration adds webhook support to the argon-camilladsp-remote daemon. When enabled, it:
+The Plexamp integration adds webhook support to the StreamerBrainz daemon. When enabled, it:
 
 1. Runs an HTTP server that receives webhooks from Plex Media Server
 2. Queries the Plex API `/status/sessions` endpoint for detailed session information
@@ -24,8 +24,8 @@ Currently, the integration logs playback events. Future versions may trigger act
 
 ```
 ┌─────────────────┐      Webhook           ┌──────────────────────┐
-│  Plex Media     │─────────────────────────▶│  argon-camilladsp-   │
-│  Server         │  (on playback events)    │  remote daemon       │
+│  Plex Media     │─────────────────────────▶│  StreamerBrainz     │
+│  Server         │  (on playback events)    │  daemon             │
 └─────────────────┘                          │                      │
                                              │  ┌────────────────┐  │
                                              │  │ HTTP Webhook   │  │
@@ -106,7 +106,7 @@ curl "http://plex.home.arpa:32400/status/sessions?X-Plex-Token=YOUR_TOKEN"
 ### Step 3: Start the Daemon with Plexamp Integration
 
 ```bash
-argon-camilladsp-remote \
+streamerbrainz \
   -plex-enabled \
   -plex-host plex.home.arpa:32400 \
   -plex-token YOUR_PLEX_TOKEN \
@@ -284,26 +284,26 @@ The webhook endpoint is unauthenticated by default.
 
 ### Systemd Service Example
 
-See `examples/argon-camilladsp-remote-plex.service`:
+See `examples/streamerbrainz-plex.service`:
 
 ```bash
 # Install the service
-sudo cp examples/argon-camilladsp-remote-plex.service \
-  /etc/systemd/system/argon-camilladsp-remote.service
+sudo cp examples/streamerbrainz-plex.service \
+  /etc/systemd/system/streamerbrainz.service
 
 # Edit the service file with your tokens
-sudo nano /etc/systemd/system/argon-camilladsp-remote.service
+sudo nano /etc/systemd/system/streamerbrainz.service
 
 # Enable and start
 sudo systemctl daemon-reload
-sudo systemctl enable argon-camilladsp-remote
-sudo systemctl start argon-camilladsp-remote
+sudo systemctl enable streamerbrainz
+sudo systemctl start streamerbrainz
 
 # Check status
-sudo systemctl status argon-camilladsp-remote
+sudo systemctl status streamerbrainz
 
 # View logs
-sudo journalctl -u argon-camilladsp-remote -f
+sudo journalctl -u streamerbrainz -f
 ```
 
 ---

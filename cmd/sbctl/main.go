@@ -8,19 +8,19 @@ import (
 )
 
 // ============================================================================
-// argon-ctl - Command-line IPC Client
+// sbctl - Command-line IPC Client
 // ============================================================================
-// This tool sends commands to the argon-camilladsp-remote daemon via IPC.
+// This tool sends commands to the StreamerBrainz daemon via IPC.
 //
 // Usage:
-//   argon-ctl volume-up
-//   argon-ctl volume-down
-//   argon-ctl mute
-//   argon-ctl set-volume -45.5
-//   argon-ctl release
+//   sbctl volume-up
+//   sbctl volume-down
+//   sbctl mute
+//   sbctl set-volume -45.5
+//   sbctl release
 //
 // Options:
-//   -socket PATH    Unix domain socket path (default: /tmp/argon-camilladsp.sock)
+//   -socket PATH    Unix domain socket path (default: /tmp/streamerbrainz.sock)
 // ============================================================================
 
 // Action types (duplicated from main package for standalone binary)
@@ -52,7 +52,7 @@ type IPCResponse struct {
 }
 
 func main() {
-	socketPath := "/tmp/argon-camilladsp.sock"
+	socketPath := "/tmp/streamerbrainz.sock"
 
 	// Parse arguments
 	args := os.Args[1:]
@@ -103,7 +103,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: invalid dB value: %v\n", err)
 			os.Exit(1)
 		}
-		action = SetVolumeAbsolute{Db: db, Origin: "argon-ctl"}
+		action = SetVolumeAbsolute{Db: db, Origin: "sbctl"}
 
 	case "help", "-h", "--help":
 		printUsage()
@@ -192,13 +192,13 @@ func marshalAction(action Action) ([]byte, error) {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, `argon-ctl - Control argon-camilladsp-remote daemon via IPC
+	fmt.Fprintf(os.Stderr, `sbctl - Control StreamerBrainz daemon via IPC
 
 Usage:
-  argon-ctl [options] <command> [args]
+  sbctl [options] <command> [args]
 
 Options:
-  -socket PATH    Unix domain socket path (default: /tmp/argon-camilladsp.sock)
+  -socket PATH    Unix domain socket path (default: /tmp/streamerbrainz.sock)
 
 Commands:
   volume-up, up           Simulate volume up button press
@@ -209,8 +209,8 @@ Commands:
   help, -h, --help        Show this help message
 
 Examples:
-  argon-ctl mute
-  argon-ctl set-volume -30.0
-  argon-ctl -socket /var/run/argon.sock volume-up
+  sbctl mute
+  sbctl set-volume -30.0
+  sbctl -socket /var/run/streamerbrainz.sock volume-up
 `)
 }
