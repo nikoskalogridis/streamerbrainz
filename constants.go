@@ -26,4 +26,9 @@ const (
 	safetyZoneDB         = 12.0  // Slow down above -12dB
 	safetyVelMaxDBPerS   = 3.0   // Max velocity in safety zone (dB/s)
 	safeDefaultDB        = -45.0 // Safe default volume when query fails (dB)
+
+	// Velocity and volume update thresholds
+	// These prevent excessive logging and network traffic when idle
+	minVelocityThreshold = 0.01 // Snap velocity to zero below this (dB/s) - prevents logging spam
+	minVolumeDiffDB      = 0.05 // Only send updates when volume differs by this amount (dB)
 )
