@@ -69,6 +69,24 @@ type LibrespotPlaybackState struct {
 }
 
 // ============================================================================
+// Plexamp Event Actions
+// ============================================================================
+
+// PlexStateChanged indicates Plexamp/Plex playback state changed
+type PlexStateChanged struct {
+	State         string `json:"state"`          // "playing", "paused", "stopped"
+	Title         string `json:"title"`          // Track title
+	Artist        string `json:"artist"`         // Artist name
+	Album         string `json:"album"`          // Album name
+	DurationMs    int64  `json:"duration_ms"`    // Track duration in milliseconds
+	PositionMs    int64  `json:"position_ms"`    // Current position in milliseconds
+	SessionKey    string `json:"session_key"`    // Plex session key
+	RatingKey     string `json:"rating_key"`     // Plex rating key
+	PlayerTitle   string `json:"player_title"`   // Player name
+	PlayerProduct string `json:"player_product"` // Player product (e.g., "Plexamp")
+}
+
+// ============================================================================
 // JSON Encoding/Decoding Support
 // ============================================================================
 // ActionEnvelope wraps actions for JSON serialization/deserialization.
@@ -144,6 +162,13 @@ func UnmarshalAction(data []byte) (Action, error) {
 		}
 		return a, nil
 
+	case "plex_state_changed":
+		var a PlexStateChanged
+		if err := json.Unmarshal(env.Data, &a); err != nil {
+			return nil, fmt.Errorf("unmarshal PlexStateChanged: %w", err)
+		}
+		return a, nil
+
 	default:
 		return nil, fmt.Errorf("unknown action type: %s", env.Type)
 	}
@@ -213,6 +238,14 @@ func MarshalAction(action Action) ([]byte, error) {
 		data, err := json.Marshal(a)
 		if err != nil {
 			return nil, fmt.Errorf("marshal LibrespotPlaybackState: %w", err)
+		}
+		env.Data = data
+
+	case PlexStateChanged:
+		env.Type = "plex_state_changed"
+		data, err := json.Marshal(a)
+		if err != nil {
+			return nil, fmt.Errorf("marshal PlexStateChanged: %w", err)
 		}
 		env.Data = data
 

@@ -2,14 +2,14 @@
 
 **Multi-source volume controller for CamillaDSP with velocity-based control**
 
-A modular Go daemon that controls [CamillaDSP](https://github.com/HEnquist/camilladsp) volume from multiple input sources including IR remotes, command-line tools, audio players (librespot), and custom scripts.
+A modular Go daemon that controls [CamillaDSP](https://github.com/HEnquist/camilladsp) volume from multiple input sources including IR remotes, command-line tools, audio players (librespot, Plexamp), and custom scripts.
 
 ---
 
 ## Features
 
 - 🎛️ **Velocity-based volume control** - Smooth, physics-based acceleration/deceleration
-- 🔌 **Multi-source input** - IR remote, IPC, command-line, scripts, Spotify (librespot)
+- 🔌 **Multi-source input** - IR remote, IPC, command-line, scripts, Spotify (librespot), Plex/Plexamp
 - 🔒 **Safety limits** - Configurable min/max volume bounds
 - 🚀 **High performance** - 100Hz update rate, minimal latency
 - 🔧 **Production-ready** - Comprehensive error handling, logging, and testing
@@ -194,6 +194,52 @@ PLAYER_EVENT=playing ./argon-camilladsp-remote librespot-hook -socket /tmp/custo
 - `-v` - Enable verbose logging
 - `-help` - Print librespot-hook help message
 
+### Plexamp/Plex Webhook
+
+The main daemon can integrate with Plex Media Server by enabling webhook support. When enabled, it runs an HTTP server that receives webhooks from Plex and queries the Plex API to get detailed session information.
+
+```bash
+# Start daemon with Plexamp webhook integration
+argon-camilladsp-remote \
+  -plex-enabled \
+  -plex-host plex.home.arpa:32400 \
+  -plex-token YOUR_PLEX_TOKEN \
+  -plex-machine-id YOUR_MACHINE_IDENTIFIER
+
+# With custom webhook port and verbose logging
+argon-camilladsp-remote \
+  -plex-enabled \
+  -plex-listen :8080 \
+  -plex-host 192.168.1.100:32400 \
+  -plex-token YOUR_TOKEN \
+  -plex-machine-id YOUR_MACHINE_ID \
+  -v
+```
+
+**Plexamp webhook options:**
+- `-plex-enabled` - Enable Plexamp webhook integration (default: `false`)
+- `-plex-listen string` - HTTP webhook listener address (default: `:8080`)
+- `-plex-host string` - Plex server host and port (default: `plex.home.arpa:32400`)
+- `-plex-token string` - Plex authentication token (required if `-plex-enabled`)
+- `-plex-machine-id string` - Player machine identifier to filter sessions (required if `-plex-enabled`)
+
+**Setup:**
+1. Get your Plex token from [Plex support](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/)
+2. Find your player's machine identifier:
+   ```bash
+   # Use the helper script (requires curl)
+   ./examples/get-plex-machine-id.sh plex.home.arpa:32400 YOUR_PLEX_TOKEN
+   ```
+3. Start the daemon with `-plex-enabled` and required parameters
+4. Configure Plex webhooks in Settings > Webhooks to point to `http://your-server:8080/webhook`
+
+**How it works:**
+- The daemon runs an HTTP webhook server alongside IR input and IPC handlers
+- When Plex sends a webhook, the server queries `/status/sessions?X-Plex-Token=XXX`
+- The response is parsed (XML) and filtered by `machineIdentifier` to find the specific player
+- A `PlexStateChanged` action is sent directly to the action channel with track info (title, artist, album, state, position)
+- Currently logs the event; future versions can trigger actions based on playback state (e.g., pause fade-out)
+
 ---
 
 ## Architecture
@@ -302,6 +348,7 @@ argon-camilladsp-remote/
 ├── input.go          # IR input event handling
 ├── ipc.go            # IPC server
 ├── librespot.go      # Librespot integration
+├── plexamp.go        # Plexamp/Plex webhook integration
 ├── constants.go      # Configuration constants
 ├── Makefile          # Build system
 ├── builds/           # Compiled binaries (created by make)
@@ -430,3 +477,4 @@ Contributions are welcome! Please:
 
 - [CamillaDSP](https://github.com/HEnquist/camilladsp) - The audio DSP engine
 - [librespot](https://github.com/librespot-org/librespot) - Open-source Spotify Connect client
+- [Plex Media Server](https://www.plex.tv/) - Media server with webhook support

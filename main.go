@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 )
 
@@ -59,6 +60,24 @@ func printUsage() {
 	fmt.Println("  -read-timeout-ms int")
 	fmt.Printf("        Timeout for websocket responses in ms (default %d)\n", defaultReadTimeoutMS)
 	fmt.Println()
+	fmt.Println("  -plex-enabled")
+	fmt.Println("        Enable Plexamp webhook integration (default false)")
+	fmt.Println()
+	fmt.Println("  -plex-listen string")
+	fmt.Println("        Plexamp webhook HTTP listener address (default \":8080\")")
+	fmt.Println()
+	fmt.Println("  -plex-host string")
+	fmt.Println("        Plex server host and port (default \"plex.home.arpa:32400\")")
+	fmt.Println()
+	fmt.Println("  -plex-token string")
+	fmt.Println("        Plex authentication token (required if -plex-enabled, unless -plex-token-file is used)")
+	fmt.Println()
+	fmt.Println("  -plex-token-file string")
+	fmt.Println("        Path to file containing Plex authentication token (alternative to -plex-token)")
+	fmt.Println()
+	fmt.Println("  -plex-machine-id string")
+	fmt.Println("        Plex player machine identifier to filter sessions (required if -plex-enabled)")
+	fmt.Println()
 	fmt.Println("  -v    Enable verbose logging")
 	fmt.Println()
 	fmt.Println("  -version")
@@ -81,6 +100,9 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("  # Connect to remote CamillaDSP instance")
 	fmt.Println("  argon-camilladsp-remote -ws ws://192.168.1.100:1234")
+	fmt.Println()
+	fmt.Println("  # Enable Plexamp webhook integration")
+	fmt.Println("  argon-camilladsp-remote -plex-enabled -plex-token YOUR_TOKEN -plex-machine-id YOUR_ID")
 	fmt.Println()
 	fmt.Println("  # Use as librespot hook (add to librespot config)")
 	fmt.Println("  onevent = argon-camilladsp-remote librespot-hook")
@@ -114,19 +136,25 @@ func main() {
 
 	// Parse command-line flags
 	var (
-		inputDev    = flag.String("input", "/dev/input/event6", "Linux input event device for IR (e.g. /dev/input/event6)")
-		wsURL       = flag.String("ws", "ws://127.0.0.1:1234", "CamillaDSP websocket URL (CamillaDSP must be started with -pPORT)")
-		socketPath  = flag.String("socket", "/tmp/argon-camilladsp.sock", "Unix domain socket path for IPC")
-		minDB       = flag.Float64("min", -65.0, "Minimum volume clamp in dB")
-		maxDB       = flag.Float64("max", 0.0, "Maximum volume clamp in dB")
-		updateHz    = flag.Int("update-hz", defaultUpdateHz, "Update loop frequency in Hz")
-		velMax      = flag.Float64("vel-max", defaultVelMaxDBPerS, "Maximum velocity in dB/s")
-		accelTime   = flag.Float64("accel-time", defaultAccelTime, "Time to reach max velocity in seconds")
-		decayTau    = flag.Float64("decay-tau", defaultDecayTau, "Velocity decay time constant in seconds")
-		readTimeout = flag.Int("read-timeout-ms", defaultReadTimeoutMS, "Timeout in milliseconds for reading websocket responses")
-		verbose     = flag.Bool("v", false, "Verbose logging")
-		showVersion = flag.Bool("version", false, "Print version and exit")
-		showHelp    = flag.Bool("help", false, "Print help message")
+		inputDev      = flag.String("input", "/dev/input/event6", "Linux input event device for IR (e.g. /dev/input/event6)")
+		wsURL         = flag.String("ws", "ws://127.0.0.1:1234", "CamillaDSP websocket URL (CamillaDSP must be started with -pPORT)")
+		socketPath    = flag.String("socket", "/tmp/argon-camilladsp.sock", "Unix domain socket path for IPC")
+		minDB         = flag.Float64("min", -65.0, "Minimum volume clamp in dB")
+		maxDB         = flag.Float64("max", 0.0, "Maximum volume clamp in dB")
+		updateHz      = flag.Int("update-hz", defaultUpdateHz, "Update loop frequency in Hz")
+		velMax        = flag.Float64("vel-max", defaultVelMaxDBPerS, "Maximum velocity in dB/s")
+		accelTime     = flag.Float64("accel-time", defaultAccelTime, "Time to reach max velocity in seconds")
+		decayTau      = flag.Float64("decay-tau", defaultDecayTau, "Velocity decay time constant in seconds")
+		readTimeout   = flag.Int("read-timeout-ms", defaultReadTimeoutMS, "Timeout in milliseconds for reading websocket responses")
+		plexEnabled   = flag.Bool("plex-enabled", false, "Enable Plexamp webhook integration")
+		plexListen    = flag.String("plex-listen", ":8080", "Plexamp webhook HTTP listener address")
+		plexHost      = flag.String("plex-host", "plex.home.arpa:32400", "Plex server host and port")
+		plexToken     = flag.String("plex-token", "", "Plex authentication token")
+		plexTokenFile = flag.String("plex-token-file", "", "Path to file containing Plex authentication token")
+		plexMachineID = flag.String("plex-machine-id", "", "Plex player machine identifier to filter sessions")
+		verbose       = flag.Bool("v", false, "Verbose logging")
+		showVersion   = flag.Bool("version", false, "Print version and exit")
+		showHelp      = flag.Bool("help", false, "Print help message")
 	)
 
 	// Custom usage function
@@ -151,6 +179,20 @@ func main() {
 	if *updateHz <= 0 || *updateHz > 1000 {
 		fmt.Fprintln(os.Stderr, "error: -update-hz must be between 1 and 1000")
 		os.Exit(1)
+	}
+	if *plexEnabled {
+		if *plexToken == "" && *plexTokenFile == "" {
+			fmt.Fprintln(os.Stderr, "error: -plex-token or -plex-token-file is required when -plex-enabled is set")
+			os.Exit(1)
+		}
+		if *plexToken != "" && *plexTokenFile != "" {
+			fmt.Fprintln(os.Stderr, "error: cannot specify both -plex-token and -plex-token-file")
+			os.Exit(1)
+		}
+		if *plexMachineID == "" {
+			fmt.Fprintln(os.Stderr, "error: -plex-machine-id is required when -plex-enabled is set")
+			os.Exit(1)
+		}
 	}
 
 	// Setup logger
@@ -207,6 +249,40 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Start Plexamp webhook server if enabled
+	if *plexEnabled {
+		// Load token from file if specified
+		token := *plexToken
+		if *plexTokenFile != "" {
+			tokenBytes, err := os.ReadFile(*plexTokenFile)
+			if err != nil {
+				logger.Error("failed to read plex token file", "file", *plexTokenFile, "error", err)
+				os.Exit(1)
+			}
+			token = strings.TrimSpace(string(tokenBytes))
+			if token == "" {
+				logger.Error("plex token file is empty", "file", *plexTokenFile)
+				os.Exit(1)
+			}
+		}
+
+		plexConfig := PlexampConfig{
+			Host:              *plexHost,
+			Token:             token,
+			MachineIdentifier: *plexMachineID,
+			ListenAddr:        *plexListen,
+		}
+		go func() {
+			logger.Info("starting Plexamp webhook server",
+				"listen", plexConfig.ListenAddr,
+				"plex_host", plexConfig.Host,
+				"machine_id", plexConfig.MachineIdentifier)
+			if err := runPlexampWebhook(plexConfig, actions, logger); err != nil {
+				logger.Error("Plexamp webhook server error", "error", err)
+			}
+		}()
+	}
+
 	// Read loop for input events
 	events := make(chan inputEvent, 64)
 	readErr := make(chan error, 1)
@@ -223,12 +299,13 @@ func main() {
 		"vel_max", *velMax,
 		"accel_time", *accelTime,
 		"decay_tau", *decayTau,
-		"read_timeout_ms", *readTimeout)
-	logger.Info("listening",
-		"input", *inputDev,
-		"ipc", *socketPath,
-		"websocket", *wsURL,
-		"update_rate_hz", *updateHz)
+		"read_timeout_ms", *readTimeout,
+		"plex_enabled", *plexEnabled)
+	listenInfo := []any{"input", *inputDev, "ipc", *socketPath, "websocket", *wsURL, "update_rate_hz", *updateHz}
+	if *plexEnabled {
+		listenInfo = append(listenInfo, "plex_webhook", *plexListen)
+	}
+	logger.Info("listening", listenInfo...)
 
 	// ============================================================================
 	// Main Event Loop - Input Coordination Only
@@ -333,8 +410,6 @@ func runLibrespotSubcommand() {
 	// Create a new flagset for librespot subcommand
 	fs := flag.NewFlagSet("librespot-hook", flag.ExitOnError)
 	socketPath := fs.String("socket", "/tmp/argon-camilladsp.sock", "Unix domain socket path for IPC")
-	minDB := fs.Float64("min", -65.0, "Minimum volume clamp in dB")
-	maxDB := fs.Float64("max", 0.0, "Maximum volume clamp in dB")
 	verbose := fs.Bool("v", false, "Verbose logging")
 	showHelp := fs.Bool("help", false, "Print help message")
 
@@ -354,7 +429,7 @@ func runLibrespotSubcommand() {
 	logger := setupLogger(*verbose)
 
 	// Run hook handler (reads from environment variables)
-	if err := runLibrespotHook(*socketPath, *minDB, *maxDB, logger); err != nil {
+	if err := runLibrespotHook(*socketPath, logger); err != nil {
 		logger.Error("librespot hook error", "error", err)
 		os.Exit(1)
 	}

@@ -1,0 +1,48 @@
+[Unit]
+Description=Argon CamillaDSP Remote Control Daemon with Plexamp Integration
+Documentation=https://github.com/yourusername/argon-camilladsp-remote
+After=network.target
+
+[Service]
+Type=simple
+
+# Optional but a good idea: hides the runtime creds dir from other services via a mount namespace
+PrivateMounts=yes
+
+# Load encrypted credential (create with: systemd-creds encrypt --name=plex-token - - > ~/.config/argon-camilladsp/plex-token.cred)
+LoadCredentialEncrypted=plex-token:%h/.config/argon-camilladsp/plex-token.cred
+
+# Path to the binary
+# %d expands to the credential directory for this service
+ExecStart=%h/.local/bin/argon-camilladsp-remote \
+    -input /dev/input/event6 \
+    -ws ws://127.0.0.1:1234 \
+    -socket %t/argon-camilladsp.sock \
+    -min -65.0 \
+    -max 0.0 \
+    -update-hz 100 \
+    -plex-enabled \
+    -plex-listen :8080 \
+    -plex-host plex.home.arpa:32400 \
+    -plex-token-file=%d/plex-token \
+    -plex-machine-id YOUR_MACHINE_IDENTIFIER_HERE \
+    -v
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Resource limits
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=argon-camilladsp-remote
+
+[Install]
+WantedBy=default.target

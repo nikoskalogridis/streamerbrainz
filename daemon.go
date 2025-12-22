@@ -88,6 +88,14 @@ func handleAction(act Action, client *CamillaDSPClient, velState *velocityState,
 	case LibrespotPlaybackState:
 		// No-op for now
 
+	case PlexStateChanged:
+		logger.Info("Plex state changed",
+			"state", a.State,
+			"title", a.Title,
+			"artist", a.Artist,
+			"album", a.Album)
+		// No-op for now - just log the event
+
 	default:
 		logger.Warn("unknown action type", "type", act)
 	}

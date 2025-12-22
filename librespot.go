@@ -20,7 +20,7 @@ const (
 )
 
 // parseLibrespotEvent reads librespot event from environment variables
-func parseLibrespotEvent(minDB, maxDB float64) (Action, error) {
+func parseLibrespotEvent() (Action, error) {
 	eventType := os.Getenv("PLAYER_EVENT")
 	if eventType == "" {
 		return nil, fmt.Errorf("PLAYER_EVENT not set")
@@ -69,7 +69,7 @@ func parseLibrespotEvent(minDB, maxDB float64) (Action, error) {
 		return nil, nil
 
 	case "session_client_changed", "shuffle_changed", "repeat_changed",
-		"auto_play_changed", "filter_explicit_content_changed":
+		"auto_play_changed", "filter_explicit_content_changed", "play_request_id_changed":
 		// These events exist but we don't handle them yet
 		return nil, nil
 
@@ -79,9 +79,9 @@ func parseLibrespotEvent(minDB, maxDB float64) (Action, error) {
 }
 
 // runLibrespotHook handles librespot hook mode
-func runLibrespotHook(socketPath string, minDB, maxDB float64, logger *slog.Logger) error {
+func runLibrespotHook(socketPath string, logger *slog.Logger) error {
 	// Parse event from environment
-	action, err := parseLibrespotEvent(minDB, maxDB)
+	action, err := parseLibrespotEvent()
 	if err != nil {
 		return err
 	}
