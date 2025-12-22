@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log/slog"
-	"math"
 	"os"
 	"strconv"
 )
@@ -21,7 +20,7 @@ const (
 )
 
 // parseLibrespotEvent reads librespot event from environment variables
-func parseLibrespotEvent() (Action, error) {
+func parseLibrespotEvent(minDB, maxDB float64) (Action, error) {
 	eventType := os.Getenv("PLAYER_EVENT")
 	if eventType == "" {
 		return nil, fmt.Errorf("PLAYER_EVENT not set")
@@ -79,31 +78,10 @@ func parseLibrespotEvent() (Action, error) {
 	}
 }
 
-// mapSpotifyVolumeToDB maps Spotify volume (0-65535) to dB range
-// Uses logarithmic mapping for better perceived volume control
-func mapSpotifyVolumeToDB(spotifyVol uint16, minDB, maxDB float64) float64 {
-	if spotifyVol == 0 {
-		return minDB
-	}
-	if spotifyVol == 65535 {
-		return maxDB
-	}
-
-	// Normalize to 0.0-1.0
-	normalized := float64(spotifyVol) / spotifyVolumeMax
-
-	// Apply logarithmic curve
-	dbRange := maxDB - minDB
-	logValue := math.Log10(1.0 + 9.0*normalized)
-	db := minDB + dbRange*logValue
-
-	return db
-}
-
 // runLibrespotHook handles librespot hook mode
 func runLibrespotHook(socketPath string, minDB, maxDB float64, logger *slog.Logger) error {
 	// Parse event from environment
-	action, err := parseLibrespotEvent()
+	action, err := parseLibrespotEvent(minDB, maxDB)
 	if err != nil {
 		return err
 	}
@@ -112,15 +90,6 @@ func runLibrespotHook(socketPath string, minDB, maxDB float64, logger *slog.Logg
 	if action == nil {
 		logger.Debug("librespot event ignored", "event", os.Getenv("PLAYER_EVENT"))
 		return nil
-	}
-
-	// Convert LibrespotVolumeChanged to SetVolumeAbsolute for backward compatibility
-	if volChange, ok := action.(LibrespotVolumeChanged); ok {
-		db := mapSpotifyVolumeToDB(volChange.Volume, minDB, maxDB)
-		action = SetVolumeAbsolute{
-			Db:     db,
-			Origin: "librespot",
-		}
 	}
 
 	logger.Debug("librespot event", "event", os.Getenv("PLAYER_EVENT"), "action", fmt.Sprintf("%T", action))
