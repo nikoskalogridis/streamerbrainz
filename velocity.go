@@ -130,3 +130,10 @@ func (v *velocityState) shouldSendUpdate() bool {
 	diff := v.targetDB - v.currentVolume
 	return diff > 0.1 || diff < -0.1
 }
+
+// getState returns current state for debugging (not locked, use carefully)
+func (v *velocityState) getState() (target, current, velocity float64, held int, known bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.targetDB, v.currentVolume, v.velocityDBPerS, v.heldDirection, v.volumeKnown
+}

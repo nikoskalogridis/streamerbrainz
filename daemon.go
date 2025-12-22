@@ -41,8 +41,20 @@ func runDaemon(
 			// Periodic velocity update and CamillaDSP synchronization
 			velState.update()
 
+			// Debug: log state when verbose and button held
+			if verbose {
+				target, current, velocity, held, known := velState.getState()
+				if held != 0 {
+					log.Printf("[STATE] held=%d vel=%.2f target=%.2f current=%.2f known=%v",
+						held, velocity, target, current, known)
+				}
+			}
+
 			// Send update to CamillaDSP if needed
 			if velState.shouldSendUpdate() {
+				if verbose {
+					log.Printf("[DAEMON] Sending volume update to CamillaDSP")
+				}
 				applyVolume(ws, wsURL, velState, readTimeout, verbose)
 			}
 		}
@@ -54,9 +66,15 @@ func runDaemon(
 func handleAction(act Action, ws *wsClient, wsURL string, velState *velocityState, readTimeout int, verbose bool) {
 	switch a := act.(type) {
 	case VolumeHeld:
+		if verbose {
+			log.Printf("[ACTION] VolumeHeld: direction=%d", a.Direction)
+		}
 		velState.setHeld(a.Direction)
 
 	case VolumeRelease:
+		if verbose {
+			log.Printf("[ACTION] VolumeRelease")
+		}
 		velState.release()
 
 	case ToggleMute:
@@ -117,10 +135,20 @@ func handleAction(act Action, ws *wsClient, wsURL string, velState *velocityStat
 // This centralization makes it easy to add policy (fade, mute, etc.)
 func applyVolume(ws *wsClient, wsURL string, velState *velocityState, readTimeout int, verbose bool) {
 	targetDB := velState.getTarget()
+	if verbose {
+		log.Printf("[APPLY] Applying volume: target=%.2f dB", targetDB)
+	}
 	sendWithRetry(ws, wsURL, verbose, func() error {
 		currentVol, err := setVolumeCommand(ws, targetDB, readTimeout, verbose)
 		if err == nil {
 			velState.updateVolume(currentVol)
+			if verbose {
+				log.Printf("[APPLY] Volume updated successfully to %.2f dB", currentVol)
+			}
+		} else {
+			if verbose {
+				log.Printf("[APPLY] Volume update failed: %v", err)
+			}
 		}
 		return err
 	})
