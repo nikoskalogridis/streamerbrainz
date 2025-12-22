@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 )
 
@@ -29,56 +28,51 @@ func printUsage() {
 	fmt.Println("  volume ramping for smooth control and librespot integration.")
 	fmt.Println()
 	fmt.Println("OPTIONS:")
-	fmt.Println("  -input string")
+	fmt.Println("  -ir-device string")
 	fmt.Printf("        Linux input event device for IR remote (default \"/dev/input/event6\")\n")
 	fmt.Println()
-	fmt.Println("  -ws string")
+	fmt.Println("  -camilladsp-ws-url string")
 	fmt.Printf("        CamillaDSP websocket URL (default \"ws://127.0.0.1:1234\")\n")
 	fmt.Println("        Note: CamillaDSP must be started with -pPORT option")
 	fmt.Println()
-	fmt.Println("  -socket string")
-	fmt.Printf("        Unix domain socket path for IPC (default \"/tmp/streamerbrainz.sock\")\n")
-	fmt.Println()
-	fmt.Println("  -min float")
-	fmt.Printf("        Minimum volume clamp in dB (default -65.0)\n")
-	fmt.Println()
-	fmt.Println("  -max float")
-	fmt.Printf("        Maximum volume clamp in dB (default 0.0)\n")
-	fmt.Println()
-	fmt.Println("  -update-hz int")
-	fmt.Printf("        Update loop frequency in Hz (default %d)\n", defaultUpdateHz)
-	fmt.Println()
-	fmt.Println("  -vel-max float")
-	fmt.Printf("        Maximum velocity in dB/s (default %.1f)\n", defaultVelMaxDBPerS)
-	fmt.Println()
-	fmt.Println("  -accel-time float")
-	fmt.Printf("        Time to reach max velocity in seconds (default %.1f)\n", defaultAccelTime)
-	fmt.Println()
-	fmt.Println("  -decay-tau float")
-	fmt.Printf("        Velocity decay time constant in seconds (default %.1f)\n", defaultDecayTau)
-	fmt.Println()
-	fmt.Println("  -read-timeout-ms int")
+	fmt.Println("  -camilladsp-ws-timeout-ms int")
 	fmt.Printf("        Timeout for websocket responses in ms (default %d)\n", defaultReadTimeoutMS)
 	fmt.Println()
-	fmt.Println("  -plex-enabled")
-	fmt.Println("        Enable Plexamp webhook integration (default false)")
+	fmt.Println("  -camilladsp-min-db float")
+	fmt.Printf("        Minimum volume clamp in dB (default -65.0)\n")
 	fmt.Println()
-	fmt.Println("  -plex-listen string")
-	fmt.Println("        Plexamp webhook HTTP listener address (default \":8080\")")
+	fmt.Println("  -camilladsp-max-db float")
+	fmt.Printf("        Maximum volume clamp in dB (default 0.0)\n")
 	fmt.Println()
-	fmt.Println("  -plex-host string")
-	fmt.Println("        Plex server host and port (default \"plex.home.arpa:32400\")")
+	fmt.Println("  -camilladsp-update-hz int")
+	fmt.Printf("        Update loop frequency in Hz (default %d)\n", defaultUpdateHz)
 	fmt.Println()
-	fmt.Println("  -plex-token string")
-	fmt.Println("        Plex authentication token (required if -plex-enabled, unless -plex-token-file is used)")
+	fmt.Println("  -vel-max-db-per-sec float")
+	fmt.Printf("        Maximum velocity in dB/s (default %.1f)\n", defaultVelMaxDBPerS)
+	fmt.Println()
+	fmt.Println("  -vel-accel-time float")
+	fmt.Printf("        Time to reach max velocity in seconds (default %.1f)\n", defaultAccelTime)
+	fmt.Println()
+	fmt.Println("  -vel-decay-tau float")
+	fmt.Printf("        Velocity decay time constant in seconds (default %.1f)\n", defaultDecayTau)
+	fmt.Println()
+	fmt.Println("  -ipc-socket string")
+	fmt.Printf("        Unix domain socket path for IPC (default \"/tmp/streamerbrainz.sock\")\n")
+	fmt.Println()
+	fmt.Println("  -webhooks-port int")
+	fmt.Println("        Webhooks HTTP listener port (default 3001)")
+	fmt.Println()
+	fmt.Println("  -plex-server-url string")
+	fmt.Println("        Plex server URL (e.g., \"http://plex.home.arpa:32400\") - enables Plex integration when set")
 	fmt.Println()
 	fmt.Println("  -plex-token-file string")
-	fmt.Println("        Path to file containing Plex authentication token (alternative to -plex-token)")
+	fmt.Println("        Path to file containing Plex authentication token (required for Plex integration)")
 	fmt.Println()
 	fmt.Println("  -plex-machine-id string")
-	fmt.Println("        Plex player machine identifier to filter sessions (required if -plex-enabled)")
+	fmt.Println("        Plex player machine identifier to filter sessions (required for Plex integration)")
 	fmt.Println()
-	fmt.Println("  -v    Enable verbose logging")
+	fmt.Println("  -log-level string")
+	fmt.Println("        Log level: error, warn, info, debug (default \"info\")")
 	fmt.Println()
 	fmt.Println("  -version")
 	fmt.Println("        Print version and exit")
@@ -89,20 +83,20 @@ func printUsage() {
 	fmt.Println("SUBCOMMANDS:")
 	fmt.Println("  librespot-hook")
 	fmt.Println("        Run as librespot event hook (reads PLAYER_EVENT from environment)")
-	fmt.Println("        Options: -socket, -min, -max, -v")
+	fmt.Println("        Options: -ipc-socket, -log-level")
 	fmt.Println()
 	fmt.Println("EXAMPLES:")
 	fmt.Println("  # Start daemon with default settings")
 	fmt.Println("  streamerbrainz")
 	fmt.Println()
 	fmt.Println("  # Custom input device and volume range")
-	fmt.Println("  streamerbrainz -input /dev/input/event4 -min -80 -max -10")
+	fmt.Println("  streamerbrainz -ir-device /dev/input/event4 -camilladsp-min-db -80 -camilladsp-max-db -10")
 	fmt.Println()
 	fmt.Println("  # Connect to remote CamillaDSP instance")
-	fmt.Println("  streamerbrainz -ws ws://192.168.1.100:1234")
+	fmt.Println("  streamerbrainz -camilladsp-ws-url ws://192.168.1.100:1234")
 	fmt.Println()
 	fmt.Println("  # Enable Plexamp webhook integration")
-	fmt.Println("  streamerbrainz -plex-enabled -plex-token YOUR_TOKEN -plex-machine-id YOUR_ID")
+	fmt.Println("  streamerbrainz -plex-server-url http://plex.home.arpa:32400 -plex-token-file /path/to/token -plex-machine-id YOUR_ID")
 	fmt.Println()
 	fmt.Println("  # Use as librespot hook (add to librespot config)")
 	fmt.Println("  onevent = streamerbrainz librespot-hook")
@@ -136,25 +130,23 @@ func main() {
 
 	// Parse command-line flags
 	var (
-		inputDev      = flag.String("input", "/dev/input/event6", "Linux input event device for IR (e.g. /dev/input/event6)")
-		wsURL         = flag.String("ws", "ws://127.0.0.1:1234", "CamillaDSP websocket URL (CamillaDSP must be started with -pPORT)")
-		socketPath    = flag.String("socket", "/tmp/streamerbrainz.sock", "Unix domain socket path for IPC")
-		minDB         = flag.Float64("min", -65.0, "Minimum volume clamp in dB")
-		maxDB         = flag.Float64("max", 0.0, "Maximum volume clamp in dB")
-		updateHz      = flag.Int("update-hz", defaultUpdateHz, "Update loop frequency in Hz")
-		velMax        = flag.Float64("vel-max", defaultVelMaxDBPerS, "Maximum velocity in dB/s")
-		accelTime     = flag.Float64("accel-time", defaultAccelTime, "Time to reach max velocity in seconds")
-		decayTau      = flag.Float64("decay-tau", defaultDecayTau, "Velocity decay time constant in seconds")
-		readTimeout   = flag.Int("read-timeout-ms", defaultReadTimeoutMS, "Timeout in milliseconds for reading websocket responses")
-		plexEnabled   = flag.Bool("plex-enabled", false, "Enable Plexamp webhook integration")
-		plexListen    = flag.String("plex-listen", ":8080", "Plexamp webhook HTTP listener address")
-		plexHost      = flag.String("plex-host", "plex.home.arpa:32400", "Plex server host and port")
-		plexToken     = flag.String("plex-token", "", "Plex authentication token")
-		plexTokenFile = flag.String("plex-token-file", "", "Path to file containing Plex authentication token")
-		plexMachineID = flag.String("plex-machine-id", "", "Plex player machine identifier to filter sessions")
-		verbose       = flag.Bool("v", false, "Verbose logging")
-		showVersion   = flag.Bool("version", false, "Print version and exit")
-		showHelp      = flag.Bool("help", false, "Print help message")
+		irDevice            = flag.String("ir-device", "/dev/input/event6", "Linux input event device for IR (e.g. /dev/input/event6)")
+		camillaDspWsUrl     = flag.String("camilladsp-ws-url", "ws://127.0.0.1:1234", "CamillaDSP websocket URL (CamillaDSP must be started with -pPORT)")
+		camillaDspWsTimeout = flag.Int("camilladsp-ws-timeout-ms", defaultReadTimeoutMS, "Timeout in milliseconds for reading websocket responses")
+		camillaDspMinDb     = flag.Float64("camilladsp-min-db", -65.0, "Minimum volume clamp in dB")
+		camillaDspMaxDb     = flag.Float64("camilladsp-max-db", 0.0, "Maximum volume clamp in dB")
+		camillaDspUpdateHz  = flag.Int("camilladsp-update-hz", defaultUpdateHz, "Update loop frequency in Hz")
+		velMaxDbPerSec      = flag.Float64("vel-max-db-per-sec", defaultVelMaxDBPerS, "Maximum velocity in dB/s")
+		velAccelTime        = flag.Float64("vel-accel-time", defaultAccelTime, "Time to reach max velocity in seconds")
+		velDecayTau         = flag.Float64("vel-decay-tau", defaultDecayTau, "Velocity decay time constant in seconds")
+		ipcSocketPath       = flag.String("ipc-socket", "/tmp/streamerbrainz.sock", "Unix domain socket path for IPC")
+		webhooksPort        = flag.Int("webhooks-port", 3001, "Webhooks HTTP listener port")
+		plexServerUrl       = flag.String("plex-server-url", "", "Plex server URL (e.g., http://plex.home.arpa:32400)")
+		plexTokenFile       = flag.String("plex-token-file", "", "Path to file containing Plex authentication token")
+		plexMachineID       = flag.String("plex-machine-id", "", "Plex player machine identifier to filter sessions")
+		logLevelStr         = flag.String("log-level", "info", "Log level: error, warn, info, debug")
+		showVersion         = flag.Bool("version", false, "Print version and exit")
+		showHelp            = flag.Bool("help", false, "Print help message")
 	)
 
 	// Custom usage function
@@ -171,43 +163,54 @@ func main() {
 		return
 	}
 
+	// Parse and validate log level
+	logLevel, err := parseLogLevel(*logLevelStr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
 	// Validate flags
-	if *minDB > *maxDB {
-		fmt.Fprintln(os.Stderr, "error: -min must be <= -max")
+	if *camillaDspMinDb > *camillaDspMaxDb {
+		fmt.Fprintln(os.Stderr, "error: -camilladsp-min-db must be <= -camilladsp-max-db")
 		os.Exit(1)
 	}
-	if *updateHz <= 0 || *updateHz > 1000 {
-		fmt.Fprintln(os.Stderr, "error: -update-hz must be between 1 and 1000")
+	if *camillaDspUpdateHz <= 0 || *camillaDspUpdateHz > 1000 {
+		fmt.Fprintln(os.Stderr, "error: -camilladsp-update-hz must be between 1 and 1000")
 		os.Exit(1)
 	}
-	if *plexEnabled {
-		if *plexToken == "" && *plexTokenFile == "" {
-			fmt.Fprintln(os.Stderr, "error: -plex-token or -plex-token-file is required when -plex-enabled is set")
+
+	// Check if Plex integration should be enabled
+	plexEnabled := *plexServerUrl != "" || *plexTokenFile != "" || *plexMachineID != ""
+
+	if plexEnabled {
+		if *plexServerUrl == "" {
+			fmt.Fprintln(os.Stderr, "error: -plex-server-url is required for Plex integration")
 			os.Exit(1)
 		}
-		if *plexToken != "" && *plexTokenFile != "" {
-			fmt.Fprintln(os.Stderr, "error: cannot specify both -plex-token and -plex-token-file")
+		if *plexTokenFile == "" {
+			fmt.Fprintln(os.Stderr, "error: -plex-token-file is required for Plex integration")
 			os.Exit(1)
 		}
 		if *plexMachineID == "" {
-			fmt.Fprintln(os.Stderr, "error: -plex-machine-id is required when -plex-enabled is set")
+			fmt.Fprintln(os.Stderr, "error: -plex-machine-id is required for Plex integration")
 			os.Exit(1)
 		}
 	}
 
 	// Setup logger
-	logger := setupLogger(*verbose)
+	logger := setupLogger(logLevel)
 
 	// Open input device
-	f, err := os.Open(*inputDev)
+	f, err := os.Open(*irDevice)
 	if err != nil {
-		logger.Error("failed to open input device", "device", *inputDev, "error", err, "tip", "run as root or add user to 'input' group")
+		logger.Error("failed to open input device", "device", *irDevice, "error", err, "tip", "run as root or add user to 'input' group")
 		os.Exit(1)
 	}
 	defer f.Close()
 
 	// Initialize CamillaDSP client
-	client, err := NewCamillaDSPClient(*wsURL, logger, *readTimeout)
+	client, err := NewCamillaDSPClient(*camillaDspWsUrl, logger, *camillaDspWsTimeout)
 	if err != nil {
 		logger.Error("failed to connect to CamillaDSP", "error", err)
 		os.Exit(1)
@@ -230,7 +233,7 @@ func main() {
 	}
 
 	// Initialize velocity state with known volume
-	velState := newVelocityState(*velMax, *accelTime, *decayTau, *minDB, *maxDB)
+	velState := newVelocityState(*velMaxDbPerSec, *velAccelTime, *velDecayTau, *camillaDspMinDb, *camillaDspMaxDb)
 	velState.updateVolume(initialVol)
 
 	// Handle shutdown
@@ -241,47 +244,20 @@ func main() {
 	actions := make(chan Action, 64)
 
 	// Start daemon brain in a goroutine
-	go runDaemon(actions, client, velState, *updateHz, logger)
+	go runDaemon(actions, client, velState, *camillaDspUpdateHz, logger)
 
 	// Start IPC server
-	if err := runIPCServer(*socketPath, actions, logger); err != nil {
+	if err := runIPCServer(*ipcSocketPath, actions, logger); err != nil {
 		logger.Error("failed to start IPC server", "error", err)
 		os.Exit(1)
 	}
 
-	// Start Plexamp webhook server if enabled
-	if *plexEnabled {
-		// Load token from file if specified
-		token := *plexToken
-		if *plexTokenFile != "" {
-			tokenBytes, err := os.ReadFile(*plexTokenFile)
-			if err != nil {
-				logger.Error("failed to read plex token file", "file", *plexTokenFile, "error", err)
-				os.Exit(1)
-			}
-			token = strings.TrimSpace(string(tokenBytes))
-			if token == "" {
-				logger.Error("plex token file is empty", "file", *plexTokenFile)
-				os.Exit(1)
-			}
+	// Start webhooks HTTP server
+	go func() {
+		if err := runWebhooksServer(*webhooksPort, plexEnabled, *plexServerUrl, *plexTokenFile, *plexMachineID, actions, logger); err != nil {
+			logger.Error("webhooks server error", "error", err)
 		}
-
-		plexConfig := PlexampConfig{
-			Host:              *plexHost,
-			Token:             token,
-			MachineIdentifier: *plexMachineID,
-			ListenAddr:        *plexListen,
-		}
-		go func() {
-			logger.Info("starting Plexamp webhook server",
-				"listen", plexConfig.ListenAddr,
-				"plex_host", plexConfig.Host,
-				"machine_id", plexConfig.MachineIdentifier)
-			if err := runPlexampWebhook(plexConfig, actions, logger); err != nil {
-				logger.Error("Plexamp webhook server error", "error", err)
-			}
-		}()
-	}
+	}()
 
 	// Read loop for input events
 	events := make(chan inputEvent, 64)
@@ -290,20 +266,21 @@ func main() {
 
 	logger.Debug("starting streamerbrainz", "version", version)
 	logger.Debug("configuration",
-		"input_device", *inputDev,
-		"websocket_url", *wsURL,
-		"ipc_socket", *socketPath,
-		"min_db", *minDB,
-		"max_db", *maxDB,
-		"update_hz", *updateHz,
-		"vel_max", *velMax,
-		"accel_time", *accelTime,
-		"decay_tau", *decayTau,
-		"read_timeout_ms", *readTimeout,
-		"plex_enabled", *plexEnabled)
-	listenInfo := []any{"input", *inputDev, "ipc", *socketPath, "websocket", *wsURL, "update_rate_hz", *updateHz}
-	if *plexEnabled {
-		listenInfo = append(listenInfo, "plex_webhook", *plexListen)
+		"ir_device", *irDevice,
+		"camilladsp_ws_url", *camillaDspWsUrl,
+		"camilladsp_ws_timeout_ms", *camillaDspWsTimeout,
+		"ipc_socket", *ipcSocketPath,
+		"camilladsp_min_db", *camillaDspMinDb,
+		"camilladsp_max_db", *camillaDspMaxDb,
+		"camilladsp_update_hz", *camillaDspUpdateHz,
+		"vel_max_db_per_sec", *velMaxDbPerSec,
+		"vel_accel_time", *velAccelTime,
+		"vel_decay_tau", *velDecayTau,
+		"webhooks_port", *webhooksPort,
+		"plex_enabled", plexEnabled)
+	listenInfo := []any{"ir_device", *irDevice, "ipc", *ipcSocketPath, "camilladsp_ws", *camillaDspWsUrl, "update_rate_hz", *camillaDspUpdateHz, "webhooks_port", *webhooksPort}
+	if plexEnabled {
+		listenInfo = append(listenInfo, "plex_server", *plexServerUrl)
 	}
 	logger.Info("listening", listenInfo...)
 
@@ -385,16 +362,11 @@ func printLibrespotHookUsage() {
 	fmt.Println("  handle playback events (start/stop/playing/paused/changed).")
 	fmt.Println()
 	fmt.Println("OPTIONS:")
-	fmt.Println("  -socket string")
+	fmt.Println("  -ipc-socket string")
 	fmt.Println("        Unix domain socket path for IPC (default \"/tmp/streamerbrainz.sock\")")
 	fmt.Println()
-	fmt.Println("  -min float")
-	fmt.Println("        Minimum volume clamp in dB (default -65.0)")
-	fmt.Println()
-	fmt.Println("  -max float")
-	fmt.Println("        Maximum volume clamp in dB (default 0.0)")
-	fmt.Println()
-	fmt.Println("  -v    Enable verbose logging")
+	fmt.Println("  -log-level string")
+	fmt.Println("        Log level: error, warn, info, debug (default \"info\")")
 	fmt.Println()
 	fmt.Println("ENVIRONMENT VARIABLES:")
 	fmt.Println("  PLAYER_EVENT - Event type from librespot (start|stop|playing|paused|changed)")
@@ -409,8 +381,8 @@ func printLibrespotHookUsage() {
 func runLibrespotSubcommand() {
 	// Create a new flagset for librespot subcommand
 	fs := flag.NewFlagSet("librespot-hook", flag.ExitOnError)
-	socketPath := fs.String("socket", "/tmp/streamerbrainz.sock", "Unix domain socket path for IPC")
-	verbose := fs.Bool("v", false, "Verbose logging")
+	ipcSocketPath := fs.String("ipc-socket", "/tmp/streamerbrainz.sock", "Unix domain socket path for IPC")
+	logLevelStr := fs.String("log-level", "info", "Log level: error, warn, info, debug")
 	showHelp := fs.Bool("help", false, "Print help message")
 
 	// Custom usage for librespot subcommand
@@ -425,11 +397,18 @@ func runLibrespotSubcommand() {
 		return
 	}
 
+	// Parse and validate log level
+	logLevel, err := parseLogLevel(*logLevelStr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Setup logger
-	logger := setupLogger(*verbose)
+	logger := setupLogger(logLevel)
 
 	// Run hook handler (reads from environment variables)
-	if err := runLibrespotHook(*socketPath, logger); err != nil {
+	if err := runLibrespotHook(*ipcSocketPath, logger); err != nil {
 		logger.Error("librespot hook error", "error", err)
 		os.Exit(1)
 	}

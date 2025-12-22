@@ -99,30 +99,34 @@ streamerbrainz -version
 sudo streamerbrainz
 
 # Custom configuration
-sudo streamerbrainz \
-  -input /dev/input/event6 \
-  -ws ws://127.0.0.1:1234 \
-  -socket /tmp/streamerbrainz.sock \
-  -min -65.0 \
-  -max 0.0 \
-  -v
+streamerbrainz \
+  -ir-device /dev/input/event6 \
+  -camilladsp-ws-url ws://127.0.0.1:1234 \
+  -ipc-socket /tmp/streamerbrainz.sock \
+  -camilladsp-min-db -65.0 \
+  -camilladsp-max-db 0.0 \
+  -log-level debug
 
-# Run with verbose logging to see all parameters
-sudo streamerbrainz -v
+# Run with debug logging to see all parameters
+sudo streamerbrainz -log-level debug
 ```
 
 **Command-line flags:**
-- `-input string` - Linux input event device for IR (default: `/dev/input/event6`)
-- `-ws string` - CamillaDSP WebSocket URL (default: `ws://127.0.0.1:1234`)
-- `-socket string` - Unix domain socket path for IPC (default: `/tmp/streamerbrainz.sock`)
-- `-min float` - Minimum volume in dB (default: `-65.0`)
-- `-max float` - Maximum volume in dB (default: `0.0`)
-- `-update-hz int` - Update loop frequency in Hz (default: `30`)
-- `-vel-max float` - Maximum velocity in dB/s (default: `15.0`)
-- `-accel-time float` - Time to reach max velocity in seconds (default: `2.0`)
-- `-decay-tau float` - Velocity decay time constant in seconds (default: `0.2`)
-- `-read-timeout-ms int` - Timeout for websocket responses in ms (default: `500`)
-- `-v` - Enable verbose logging
+- `-ir-device string` - Linux input event device for IR (default: `/dev/input/event6`)
+- `-camilladsp-ws-url string` - CamillaDSP WebSocket URL (default: `ws://127.0.0.1:1234`)
+- `-camilladsp-ws-timeout-ms int` - Websocket read timeout in ms (default: `500`)
+- `-camilladsp-min-db float` - Minimum volume in dB (default: `-65.0`)
+- `-camilladsp-max-db float` - Maximum volume in dB (default: `0.0`)
+- `-camilladsp-update-hz int` - Update loop frequency in Hz (default: `30`)
+- `-vel-max-db-per-sec float` - Maximum velocity in dB/s (default: `15.0`)
+- `-vel-accel-time float` - Time to reach max velocity in seconds (default: `2.0`)
+- `-vel-decay-tau float` - Velocity decay time constant in seconds (default: `0.2`)
+- `-ipc-socket string` - Unix domain socket path for IPC (default: `/tmp/streamerbrainz.sock`)
+- `-webhooks-port int` - Webhooks HTTP listener port (default: `3001`)
+- `-plex-server-url string` - Plex server URL (enables Plex integration when set)
+- `-plex-token-file string` - Path to file with Plex authentication token
+- `-plex-machine-id string` - Plex player machine identifier
+- `-log-level string` - Log level: error, warn, info, debug (default: `info`)
 - `-version` - Print version and exit
 - `-help` - Print comprehensive help message
 
@@ -144,7 +148,7 @@ sbctl volume-down
 sbctl release
 
 # Use custom socket
-sbctl -socket /tmp/streamerbrainz.sock mute
+sbctl -ipc-socket /tmp/streamerbrainz.sock mute
 ```
 
 ### Python API
@@ -180,48 +184,43 @@ streamerbrainz librespot-hook -help
 librespot --onevent streamerbrainz librespot-hook ...
 
 # Test manually with environment variables
-PLAYER_EVENT=volume_changed VOLUME=32768 ./streamerbrainz librespot-hook -v
-PLAYER_EVENT=playing TRACK_ID=test ./streamerbrainz librespot-hook -v
+PLAYER_EVENT=volume_changed VOLUME=32768 ./streamerbrainz librespot-hook -log-level debug
+PLAYER_EVENT=playing TRACK_ID=test ./streamerbrainz librespot-hook -log-level debug
 
 # Use custom socket
-PLAYER_EVENT=playing ./streamerbrainz librespot-hook -socket /tmp/custom.sock
+PLAYER_EVENT=playing ./streamerbrainz librespot-hook -ipc-socket /tmp/custom.sock
 ```
 
 **Librespot hook options:**
-- `-socket string` - Unix domain socket path for IPC (default: `/tmp/streamerbrainz.sock`)
-- `-min float` - Minimum volume clamp in dB (default: `-65.0`)
-- `-max float` - Maximum volume clamp in dB (default: `0.0`)
-- `-v` - Enable verbose logging
+- `-ipc-socket string` - Unix domain socket path for IPC (default: `/tmp/streamerbrainz.sock`)
+- `-log-level string` - Log level: error, warn, info, debug (default: `info`)
 - `-help` - Print librespot-hook help message
 
 ### Plexamp/Plex Webhook
 
-The main daemon can integrate with Plex Media Server by enabling webhook support. When enabled, it runs an HTTP server that receives webhooks from Plex and queries the Plex API to get detailed session information.
+The main daemon includes a webhooks HTTP server that always runs. Plex integration is automatically enabled when you provide the required Plex configuration parameters.
 
 ```bash
 # Start daemon with Plexamp webhook integration
 streamerbrainz \
-  -plex-enabled \
-  -plex-host plex.home.arpa:32400 \
-  -plex-token YOUR_PLEX_TOKEN \
+  -plex-server-url http://plex.home.arpa:32400 \
+  -plex-token-file /path/to/plex-token \
   -plex-machine-id YOUR_MACHINE_IDENTIFIER
 
-# With custom webhook port and verbose logging
+# With custom webhook port and debug logging
 streamerbrainz \
-  -plex-enabled \
-  -plex-listen :8080 \
-  -plex-host 192.168.1.100:32400 \
-  -plex-token YOUR_TOKEN \
+  -webhooks-port 8080 \
+  -plex-server-url http://192.168.1.100:32400 \
+  -plex-token-file /path/to/plex-token \
   -plex-machine-id YOUR_MACHINE_ID \
-  -v
+  -log-level debug
 ```
 
-**Plexamp webhook options:**
-- `-plex-enabled` - Enable Plexamp webhook integration (default: `false`)
-- `-plex-listen string` - HTTP webhook listener address (default: `:8080`)
-- `-plex-host string` - Plex server host and port (default: `plex.home.arpa:32400`)
-- `-plex-token string` - Plex authentication token (required if `-plex-enabled`)
-- `-plex-machine-id string` - Player machine identifier to filter sessions (required if `-plex-enabled`)
+**Plex webhook options:**
+- `-webhooks-port int` - HTTP webhook listener port (default: `3001`)
+- `-plex-server-url string` - Plex server URL (e.g., `http://plex.home.arpa:32400`) - enables Plex integration when set
+- `-plex-token-file string` - Path to file containing Plex authentication token (required for Plex)
+- `-plex-machine-id string` - Player machine identifier to filter sessions (required for Plex)
 
 **Setup:**
 1. Get your Plex token from [Plex support](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/)
@@ -230,8 +229,8 @@ streamerbrainz \
    # Use the helper script (requires curl)
    ./examples/get-plex-machine-id.sh plex.home.arpa:32400 YOUR_PLEX_TOKEN
    ```
-3. Start the daemon with `-plex-enabled` and required parameters
-4. Configure Plex webhooks in Settings > Webhooks to point to `http://your-server:8080/webhook`
+3. Start the daemon with required Plex parameters (integration enables automatically)
+4. Configure Plex webhooks in Settings > Webhooks to point to `http://your-server:3001/webhooks/plex`
 
 **How it works:**
 - The daemon runs an HTTP webhook server alongside IR input and IPC handlers
@@ -410,9 +409,11 @@ sudo chmod 666 /dev/input/event6
 # Or add user to input group
 sudo usermod -a -G input $USER
 
-# Run with verbose logging to see configuration
-sudo ./builds/streamerbrainz -v
+# Run with debug logging to see configuration
+sudo ./builds/streamerbrainz -log-level debug
 ```
+
+**Note:** The webhooks HTTP server always runs on the configured port (default 3001), regardless of whether Plex integration is enabled.
 
 ### IPC connection refused
 
@@ -420,11 +421,11 @@ sudo ./builds/streamerbrainz -v
 # Check if daemon is running
 ps aux | grep streamerbrainz
 
-# Check socket exists
+# Check IPC socket exists
 ls -l /tmp/streamerbrainz.sock
 
-# Enable verbose logging
-sudo ./streamerbrainz -v
+# Enable debug logging
+sudo ./streamerbrainz -log-level debug
 ```
 
 ### Volume not changing
@@ -434,7 +435,7 @@ sudo ./streamerbrainz -v
 curl http://127.0.0.1:1234/api/v1/status
 
 # Check WebSocket URL
-sudo ./streamerbrainz -ws ws://127.0.0.1:1234 -v
+sudo ./streamerbrainz -camilladsp-ws-url ws://127.0.0.1:1234 -log-level debug
 ```
 
 ---

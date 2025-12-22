@@ -64,10 +64,11 @@ The Plexamp integration adds webhook support directly to the main daemon, allowi
    - Currently logs the event (placeholder for future features)
 
 3. **`main.go`**
-   - Added 5 new flags: `-plex-enabled`, `-plex-listen`, `-plex-host`, `-plex-token`, `-plex-token-file`, `-plex-machine-id`
+   - Refactored flags: `-plex-server-url`, `-plex-token-file`, `-plex-machine-id`, `-webhooks-port`
+   - Removed `-plex-enabled` flag - Plex integration enabled automatically when params provided
+   - Webhooks HTTP server always runs
    - Added token file reading support (for systemd credentials)
    - Added validation logic
-   - Starts webhook HTTP server as goroutine when `-plex-enabled`
    - Updated help text
 
 4. **`README.md`**
@@ -81,7 +82,7 @@ The Plexamp integration adds webhook support directly to the main daemon, allowi
 ## API Flow
 
 ```
-1. Plex sends webhook → http://daemon:8080/webhook
+1. Plex sends webhook → http://daemon:3001/webhooks/plex
 2. Daemon receives webhook trigger
 3. Daemon queries Plex API → http://plex:32400/status/sessions?X-Plex-Token=XXX
 4. Daemon parses XML response
@@ -118,14 +119,13 @@ type PlexStateChanged struct {
 
 | Flag | Default | Required | Description |
 |------|---------|----------|-------------|
-| `-plex-enabled` | `false` | Yes (to enable) | Enable Plexamp webhook integration |
-| `-plex-listen` | `:8080` | No | HTTP webhook listener address |
-| `-plex-host` | `plex.home.arpa:32400` | No | Plex server host:port |
-| `-plex-token` | `""` | Yes* | Plex authentication token |
-| `-plex-token-file` | `""` | Yes* | Path to file with token |
-| `-plex-machine-id` | `""` | Yes | Player machine identifier |
+| `-webhooks-port` | `3001` | No | HTTP webhooks listener port |
+| `-plex-server-url` | `""` | Yes (for Plex) | Plex server URL (e.g., http://plex.home.arpa:32400) |
+| `-plex-token-file` | `""` | Yes (for Plex) | Path to file containing Plex token |
+| `-plex-machine-id` | `""` | Yes (for Plex) | Player machine identifier |
 
-\* Either `-plex-token` OR `-plex-token-file` required (not both)
+Note: Plex integration is automatically enabled when all three Plex parameters are provided.
+The webhooks HTTP server always runs, regardless of Plex integration status.
 
 ### Systemd Service Configuration
 
@@ -135,7 +135,9 @@ LoadCredentialEncrypted=plex-token:%h/.config/streamerbrainz/plex-token.cred
 
 # Pass credential path to daemon
 ExecStart=%h/.local/bin/streamerbrainz \
+    -plex-server-url http://plex.home.arpa:32400 \
     -plex-token-file=%d/plex-token \
+    -plex-machine-id YOUR_MACHINE_ID \
     ...
 ```
 
@@ -155,7 +157,7 @@ ExecStart=%h/.local/bin/streamerbrainz \
 ### 3. File-Based Token Loading
 - Supports `-plex-token-file` for reading from systemd credentials
 - Token trimmed and validated on load
-- Falls back to `-plex-token` for testing/development
+- Only token files are supported (no command-line token option)
 
 ### 4. No Token in Service Files
 - Service file references credential path, not actual token
@@ -186,10 +188,10 @@ See `examples/SETUP_CREDENTIALS.md` for complete instructions.
 ```bash
 # Start daemon with Plex enabled
 streamerbrainz \
-  -plex-enabled \
-  -plex-token YOUR_TOKEN \
+  -plex-server-url http://plex.home.arpa:32400 \
+  -plex-token-file /path/to/plex-token \
   -plex-machine-id YOUR_MACHINE_ID \
-  -v
+  -log-level debug
 
 # Play music in Plexamp
 # Watch logs for:
@@ -286,10 +288,11 @@ Systemd credentials:
 - ✅ No extra dependencies
 - ✅ User-scoped security
 
-### Why Both -plex-token and -plex-token-file?
+### Token Security
 
-- `-plex-token`: Quick testing and development
-- `-plex-token-file`: Production use with systemd credentials
+- Only `-plex-token-file` is supported (no command-line token option)
+- Use systemd encrypted credentials for production deployments
+- Store tokens in files with restricted permissions (chmod 600)
 - Mutual exclusivity enforced
 
 ---
@@ -342,24 +345,23 @@ streamerbrainz/
 ## Command-Line Examples
 
 ```bash
-# Development (token in command line)
+# Basic Plex integration
 streamerbrainz \
-  -plex-enabled \
-  -plex-token abc123xyz \
+  -plex-server-url http://plex.home.arpa:32400 \
+  -plex-token-file /path/to/plex-token \
   -plex-machine-id bc97b983-8169-47e3-bbcc-54a12d662546
 
-# Production (token from file)
+# With systemd credentials
 streamerbrainz \
-  -plex-enabled \
-  -plex-token-file=/run/credentials/plex-token \
+  -plex-server-url http://plex.home.arpa:32400 \
+  -plex-token-file /run/credentials/plex-token \
   -plex-machine-id bc97b983-8169-47e3-bbcc-54a12d662546
 
 # Custom webhook port
 streamerbrainz \
-  -plex-enabled \
-  -plex-listen :9000 \
-  -plex-host 192.168.1.100:32400 \
-  -plex-token-file=/path/to/token \
+  -webhooks-port 9000 \
+  -plex-server-url http://192.168.1.100:32400 \
+  -plex-token-file /path/to/token \
   -plex-machine-id YOUR_ID
 ```
 

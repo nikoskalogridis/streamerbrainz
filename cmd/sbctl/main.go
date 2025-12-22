@@ -20,7 +20,7 @@ import (
 //   sbctl release
 //
 // Options:
-//   -socket PATH    Unix domain socket path (default: /tmp/streamerbrainz.sock)
+//   -ipc-socket PATH    Unix domain socket path (default: /tmp/streamerbrainz.sock)
 // ============================================================================
 
 // Action types (duplicated from main package for standalone binary)
@@ -61,10 +61,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Check for -socket flag
-	if args[0] == "-socket" || args[0] == "--socket" {
+	// Check for -ipc-socket flag
+	if args[0] == "-ipc-socket" || args[0] == "--ipc-socket" {
 		if len(args) < 2 {
-			fmt.Fprintf(os.Stderr, "error: -socket requires an argument\n")
+			fmt.Fprintf(os.Stderr, "error: -ipc-socket requires an argument\n")
 			os.Exit(1)
 		}
 		socketPath = args[1]
@@ -198,7 +198,7 @@ Usage:
   sbctl [options] <command> [args]
 
 Options:
-  -socket PATH    Unix domain socket path (default: /tmp/streamerbrainz.sock)
+  -ipc-socket PATH    Unix domain socket path (default: /tmp/streamerbrainz.sock)
 
 Commands:
   volume-up, up           Simulate volume up button press
@@ -211,6 +211,6 @@ Commands:
 Examples:
   sbctl mute
   sbctl set-volume -30.0
-  sbctl -socket /var/run/streamerbrainz.sock volume-up
+  sbctl -ipc-socket /var/run/streamerbrainz.sock volume-up
 `)
 }

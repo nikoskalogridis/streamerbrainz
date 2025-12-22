@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 )
 
 // ============================================================================
@@ -61,16 +63,15 @@ type PlexMedia struct {
 
 // PlexampConfig holds configuration for the Plexamp webhook server
 type PlexampConfig struct {
-	Host              string // Plex server host (e.g., "plex.home.arpa:32400")
+	ServerUrl         string // Plex server URL (e.g., "http://plex.home.arpa:32400")
 	Token             string // Plex authentication token
 	MachineIdentifier string // Machine identifier to filter sessions by
-	ListenAddr        string // HTTP webhook listener address (e.g., ":8080")
 }
 
 // fetchPlexSessions queries the Plex API for current sessions
 func fetchPlexSessions(config PlexampConfig, logger *slog.Logger) (*PlexMediaContainer, error) {
 	// Build URL with token
-	baseURL := fmt.Sprintf("http://%s/status/sessions", config.Host)
+	baseURL := fmt.Sprintf("%s/status/sessions", config.ServerUrl)
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse base URL: %w", err)
@@ -180,13 +181,35 @@ func handlePlexWebhook(config PlexampConfig, actions chan<- Action, logger *slog
 	}
 }
 
-// runPlexampWebhook starts the HTTP webhook server
-func runPlexampWebhook(config PlexampConfig, actions chan<- Action, logger *slog.Logger) error {
-	http.HandleFunc("/webhook", handlePlexWebhook(config, actions, logger))
+// runWebhooksServer starts the HTTP webhook server and optionally enables Plex integration
+func runWebhooksServer(port int, plexEnabled bool, plexServerUrl, plexTokenFile, plexMachineID string, actions chan<- Action, logger *slog.Logger) error {
+	// Setup Plex webhook if enabled
+	if plexEnabled {
+		// Load token from file
+		tokenBytes, err := os.ReadFile(plexTokenFile)
+		if err != nil {
+			return fmt.Errorf("failed to read plex token file: %w", err)
+		}
+		token := strings.TrimSpace(string(tokenBytes))
+		if token == "" {
+			return fmt.Errorf("plex token file is empty")
+		}
 
-	logger.Info("Plexamp webhook listening", "addr", config.ListenAddr)
+		plexConfig := PlexampConfig{
+			ServerUrl:         plexServerUrl,
+			Token:             token,
+			MachineIdentifier: plexMachineID,
+		}
 
-	if err := http.ListenAndServe(config.ListenAddr, nil); err != nil {
+		http.HandleFunc("/webhooks/plex", handlePlexWebhook(plexConfig, actions, logger))
+		logger.Info("Plex webhook enabled", "server", plexServerUrl, "machine_id", plexMachineID, "endpoint", "/webhooks/plex")
+	}
+
+	// Start HTTP server
+	listenAddr := fmt.Sprintf(":%d", port)
+	logger.Info("webhooks server listening", "port", port)
+
+	if err := http.ListenAndServe(listenAddr, nil); err != nil {
 		return fmt.Errorf("HTTP server: %w", err)
 	}
 

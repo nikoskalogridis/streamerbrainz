@@ -15,18 +15,17 @@ LoadCredentialEncrypted=plex-token:%h/.config/streamerbrainz/plex-token.cred
 # Path to the binary
 # %d expands to the credential directory for this service
 ExecStart=%h/.local/bin/streamerbrainz \
-    -input /dev/input/event6 \
-    -ws ws://127.0.0.1:1234 \
-    -socket %t/streamerbrainz.sock \
-    -min -65.0 \
-    -max 0.0 \
-    -update-hz 100 \
-    -plex-enabled \
-    -plex-listen :8080 \
-    -plex-host plex.home.arpa:32400 \
+    -ir-device /dev/input/event6 \
+    -camilladsp-ws-url ws://127.0.0.1:1234 \
+    -ipc-socket %t/streamerbrainz.sock \
+    -camilladsp-min-db -65.0 \
+    -camilladsp-max-db 0.0 \
+    -camilladsp-update-hz 100 \
+    -webhooks-port 3001 \
+    -plex-server-url http://plex.home.arpa:32400 \
     -plex-token-file=%d/plex-token \
     -plex-machine-id YOUR_MACHINE_IDENTIFIER_HERE \
-    -v
+    -log-level info
 
 # Restart policy
 Restart=on-failure

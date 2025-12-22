@@ -51,16 +51,15 @@ Copy the **Machine ID**.
 
 ```bash
 sudo streamerbrainz \
-  -plex-enabled \
-  -plex-host plex.home.arpa:32400 \
-  -plex-token YOUR_PLEX_TOKEN \
+  -plex-server-url http://plex.home.arpa:32400 \
+  -plex-token-file /path/to/plex-token \
   -plex-machine-id bc97b983-8169-47e3-bbcc-54a12d662546 \
-  -v
+  -log-level debug
 ```
 
 **Replace:**
-- `plex.home.arpa:32400` with your Plex server address
-- `YOUR_PLEX_TOKEN` with token from step 1
+- `http://plex.home.arpa:32400` with your Plex server URL
+- `/path/to/plex-token` with path to your token file
 - `bc97b983-...` with machine ID from step 2
 
 ---
@@ -69,9 +68,9 @@ sudo streamerbrainz \
 
 1. Open Plex Web App
 2. Settings (⚙️) → Webhooks
-3. Add webhook URL: `http://YOUR_DAEMON_IP:8080/webhook`
-   - Example: `http://192.168.1.100:8080/webhook`
-   - For localhost: `http://127.0.0.1:8080/webhook`
+3. Add webhook URL: `http://YOUR_DAEMON_IP:3001/webhooks/plex`
+   - Example: `http://192.168.1.100:3001/webhooks/plex`
+   - For localhost: `http://127.0.0.1:3001/webhooks/plex`
 4. Save
 
 ---
@@ -90,6 +89,10 @@ echo -n "YOUR_PLEX_TOKEN" | \
   systemd-creds encrypt --name=plex-token - - > \
   ~/.config/streamerbrainz/plex-token.cred
 chmod 600 ~/.config/streamerbrainz/plex-token.cred
+
+# Or use a plain text file (less secure)
+echo -n "YOUR_PLEX_TOKEN" > ~/.config/streamerbrainz/plex-token
+chmod 600 ~/.config/streamerbrainz/plex-token
 
 # Then use the service file which references the credential
 cp examples/streamerbrainz-plex.service ~/.config/systemd/user/
@@ -113,7 +116,7 @@ Play, pause, or skip a track in Plexamp.
 
 **Manual webhook test:**
 ```bash
-curl -X POST http://localhost:8080/webhook
+curl -X POST http://localhost:3001/webhooks/plex
 ```
 
 ---
@@ -131,8 +134,8 @@ curl -X POST http://localhost:8080/webhook
 
 ### Webhook not triggering
 - Verify webhook URL in Plex settings
-- Check that port 8080 is accessible from Plex server
-- Look for errors in daemon logs (`-v` flag)
+- Check that port 3001 is accessible from Plex server
+- Look for errors in daemon logs (`-log-level debug` flag)
 
 ### Wrong player detected
 - Multiple Plexamp instances? Each has unique machine ID
@@ -181,40 +184,23 @@ journalctl --user -u streamerbrainz-plex -f
 ```bash
 # Full example with all common options
 streamerbrainz \
-  -input /dev/input/event6 \
-  -ws ws://127.0.0.1:1234 \
-  -socket /tmp/streamerbrainz.sock \
-  -min -65.0 \
-  -max 0.0 \
-  -plex-enabled \
-  -plex-listen :8080 \
-  -plex-host plex.home.arpa:32400 \
-  -plex-token YOUR_TOKEN \
+  -ir-device /dev/input/event6 \
+  -camilladsp-ws-url ws://127.0.0.1:1234 \
+  -ipc-socket /tmp/streamerbrainz.sock \
+  -camilladsp-min-db -65.0 \
+  -camilladsp-max-db 0.0 \
+  -webhooks-port 3001 \
+  -plex-server-url http://plex.home.arpa:32400 \
+  -plex-token-file /path/to/token/file \
   -plex-machine-id YOUR_MACHINE_ID \
-  -v
-
-# Or with token file (more secure):
-streamerbrainz \
-  -input /dev/input/event6 \
-  -ws ws://127.0.0.1:1234 \
-  -socket /tmp/streamerbrainz.sock \
-  -min -65.0 \
-  -max 0.0 \
-  -plex-enabled \
-  -plex-listen :8080 \
-  -plex-host plex.home.arpa:32400 \
-  -plex-token-file=/path/to/token/file \
-  -plex-machine-id YOUR_MACHINE_ID \
-  -v
+  -log-level debug
 ```
 
-**Plexamp-specific flags:**
-- `-plex-enabled` - Enable webhook integration (required)
-- `-plex-listen :8080` - HTTP listener address
-- `-plex-host HOST:PORT` - Plex server address
-- `-plex-token TOKEN` - Plex auth token (required, unless using -plex-token-file)
-- `-plex-token-file PATH` - Path to file with token (alternative to -plex-token)
-- `-plex-machine-id ID` - Player machine identifier (required)
+**Plex-specific flags:**
+- `-webhooks-port 3001` - HTTP webhooks listener port (default: 3001)
+- `-plex-server-url URL` - Plex server URL (e.g., http://plex.home.arpa:32400) - enables Plex when set
+- `-plex-token-file PATH` - Path to file with Plex token (required for Plex)
+- `-plex-machine-id ID` - Player machine identifier (required for Plex)
 
 ---
 
@@ -224,7 +210,7 @@ streamerbrainz \
 - Don't commit to git
 - **Use systemd encrypted credentials** (see `SETUP_CREDENTIALS.md`)
 - Or use `-plex-token-file` with restricted permissions (chmod 600)
-- Never use `-plex-token` flag in production service files
+- Always store tokens in files, never on command line
 
 ⚠️ **Webhook endpoint:**
 - Currently unauthenticated
@@ -259,4 +245,4 @@ See `docs/plexamp-integration.md` for detailed documentation.
 **Common issues:**
 - Token expired? Generate a new one
 - Multiple players? List all with helper script
-- Firewall blocking? Check port 8080 accessibility
+- Firewall blocking? Check port 3001 accessibility

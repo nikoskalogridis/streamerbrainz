@@ -107,12 +107,11 @@ curl "http://plex.home.arpa:32400/status/sessions?X-Plex-Token=YOUR_TOKEN"
 
 ```bash
 streamerbrainz \
-  -plex-enabled \
-  -plex-host plex.home.arpa:32400 \
-  -plex-token YOUR_PLEX_TOKEN \
+  -plex-server-url http://plex.home.arpa:32400 \
+  -plex-token-file /path/to/plex-token \
   -plex-machine-id bc97b983-8169-47e3-bbcc-54a12d662546 \
-  -plex-listen :8080 \
-  -v
+  -webhooks-port 3001 \
+  -log-level debug
 ```
 
 ### Step 4: Configure Plex Webhooks
@@ -121,7 +120,7 @@ streamerbrainz \
 2. Go to Settings (wrench icon) > Webhooks
 3. Add a new webhook URL:
    ```
-   http://your-server-ip:8080/webhook
+   http://your-server-ip:3001/webhooks/plex
    ```
 4. Save the webhook
 
@@ -138,14 +137,14 @@ Play, pause, or skip tracks in Plexamp and watch the daemon logs:
 ---
 
 ## Configuration Options
+## Configuration Reference
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-plex-enabled` | `false` | Enable Plexamp webhook integration |
-| `-plex-listen` | `:8080` | HTTP webhook listener address |
-| `-plex-host` | `plex.home.arpa:32400` | Plex server host and port |
-| `-plex-token` | *(required)* | Plex authentication token |
-| `-plex-machine-id` | *(required)* | Player machine identifier to filter |
+| `-webhooks-port` | `3001` | HTTP webhooks listener port |
+| `-plex-server-url` | `""` | Plex server URL (e.g., http://plex.home.arpa:32400) - enables Plex when set |
+| `-plex-token-file` | `""` | Path to file containing Plex authentication token |
+| `-plex-machine-id` | `""` | Player machine identifier to filter |
 
 ---
 
@@ -223,11 +222,14 @@ Currently, the daemon logs this action. Future enhancements may include:
 **Check network connectivity:**
 ```bash
 # From Plex server, test if daemon is reachable:
-curl -X POST http://your-daemon-ip:8080/webhook
+curl -X POST http://your-daemon-ip:3001/webhooks/plex
+
+# Check if webhooks server is running:
+curl http://your-daemon-ip:3001/
 ```
 
 **Check firewall:**
-- Ensure port 8080 (or your custom port) is open
+- Ensure port 3001 (or your custom port) is open
 - Check iptables/firewall rules
 
 **Verify webhook configuration:**
