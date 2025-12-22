@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -21,12 +21,10 @@ import (
 // runDaemon is the main daemon loop that processes actions and updates state
 func runDaemon(
 	actions <-chan Action,
-	ws *wsClient,
-	wsURL string,
+	client *CamillaDSPClient,
 	velState *velocityState,
 	updateHz int,
-	readTimeout int,
-	verbose bool,
+	logger *slog.Logger,
 ) {
 	updateInterval := time.Second / time.Duration(updateHz)
 	ticker := time.NewTicker(updateInterval)
@@ -35,27 +33,15 @@ func runDaemon(
 	for {
 		select {
 		case act := <-actions:
-			handleAction(act, ws, wsURL, velState, readTimeout, verbose)
+			handleAction(act, client, velState, logger)
 
 		case <-ticker.C:
 			// Periodic velocity update and CamillaDSP synchronization
 			velState.update()
 
-			// Debug: log state when verbose and button held
-			if verbose {
-				target, current, velocity, held, known := velState.getState()
-				if held != 0 {
-					log.Printf("[STATE] held=%d vel=%.2f target=%.2f current=%.2f known=%v",
-						held, velocity, target, current, known)
-				}
-			}
-
 			// Send update to CamillaDSP if needed
 			if velState.shouldSendUpdate() {
-				if verbose {
-					log.Printf("[DAEMON] Sending volume update to CamillaDSP")
-				}
-				applyVolume(ws, wsURL, velState, readTimeout, verbose)
+				applyVolume(client, velState, logger)
 			}
 		}
 	}
@@ -63,93 +49,57 @@ func runDaemon(
 
 // handleAction processes an Action and updates internal state
 // This only mutates intent - it does NOT talk to CamillaDSP directly
-func handleAction(act Action, ws *wsClient, wsURL string, velState *velocityState, readTimeout int, verbose bool) {
+func handleAction(act Action, client *CamillaDSPClient, velState *velocityState, logger *slog.Logger) {
 	switch a := act.(type) {
 	case VolumeHeld:
-		if verbose {
-			log.Printf("[ACTION] VolumeHeld: direction=%d", a.Direction)
-		}
 		velState.setHeld(a.Direction)
 
 	case VolumeRelease:
-		if verbose {
-			log.Printf("[ACTION] VolumeRelease")
-		}
 		velState.release()
 
 	case ToggleMute:
 		// Mute is immediate, not velocity-based
-		sendWithRetry(ws, wsURL, verbose, func() error {
-			return handleMuteCommand(ws, verbose)
-		})
+		if err := client.ToggleMute(); err != nil {
+			logger.Error("toggle mute failed", "error", err)
+		}
 
 	case SetVolumeAbsolute:
 		// Absolute volume request (e.g., from librespot)
-		if verbose {
-			log.Printf("[ACTION] SetVolumeAbsolute: %.2f dB from %s", a.Db, a.Origin)
+		currentVol, err := client.SetVolume(a.Db)
+		if err == nil {
+			velState.updateVolume(currentVol)
+		} else {
+			logger.Error("set volume failed", "error", err)
 		}
-		sendWithRetry(ws, wsURL, verbose, func() error {
-			currentVol, err := setVolumeCommand(ws, a.Db, readTimeout, verbose)
-			if err == nil {
-				velState.updateVolume(currentVol)
-			}
-			return err
-		})
 
 	case LibrespotSessionConnected:
-		if verbose {
-			log.Printf("[ACTION] LibrespotSessionConnected: user=%s", a.UserName)
-		}
 		// No-op for now
 
 	case LibrespotSessionDisconnected:
-		if verbose {
-			log.Printf("[ACTION] LibrespotSessionDisconnected: user=%s", a.UserName)
-		}
 		// No-op for now
 
 	case LibrespotVolumeChanged:
-		if verbose {
-			log.Printf("[ACTION] LibrespotVolumeChanged: volume=%d", a.Volume)
-		}
 		// No-op for now (converted to SetVolumeAbsolute in librespot.go)
 
 	case LibrespotTrackChanged:
-		if verbose {
-			log.Printf("[ACTION] LibrespotTrackChanged: track=%s name=%s", a.TrackId, a.Name)
-		}
 		// No-op for now
 
 	case LibrespotPlaybackState:
-		if verbose {
-			log.Printf("[ACTION] LibrespotPlaybackState: state=%s track=%s", a.State, a.TrackId)
-		}
 		// No-op for now
 
 	default:
-		log.Printf("[WARN] Unknown action type: %T", act)
+		logger.Warn("unknown action type", "type", act)
 	}
 }
 
 // applyVolume is the ONLY place that sends volume changes to CamillaDSP
 // This centralization makes it easy to add policy (fade, mute, etc.)
-func applyVolume(ws *wsClient, wsURL string, velState *velocityState, readTimeout int, verbose bool) {
+func applyVolume(client *CamillaDSPClient, velState *velocityState, logger *slog.Logger) {
 	targetDB := velState.getTarget()
-	if verbose {
-		log.Printf("[APPLY] Applying volume: target=%.2f dB", targetDB)
+	currentVol, err := client.SetVolume(targetDB)
+	if err == nil {
+		velState.updateVolume(currentVol)
+	} else {
+		logger.Error("apply volume failed", "error", err)
 	}
-	sendWithRetry(ws, wsURL, verbose, func() error {
-		currentVol, err := setVolumeCommand(ws, targetDB, readTimeout, verbose)
-		if err == nil {
-			velState.updateVolume(currentVol)
-			if verbose {
-				log.Printf("[APPLY] Volume updated successfully to %.2f dB", currentVol)
-			}
-		} else {
-			if verbose {
-				log.Printf("[APPLY] Volume update failed: %v", err)
-			}
-		}
-		return err
-	})
 }

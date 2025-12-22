@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -32,7 +32,7 @@ type IPCResponse struct {
 }
 
 // runIPCServer starts the Unix domain socket server
-func runIPCServer(socketPath string, actions chan<- Action, verbose bool) error {
+func runIPCServer(socketPath string, actions chan<- Action, logger *slog.Logger) error {
 	// Remove existing socket file if it exists
 	if err := os.RemoveAll(socketPath); err != nil {
 		return fmt.Errorf("remove existing socket: %w", err)
@@ -50,9 +50,7 @@ func runIPCServer(socketPath string, actions chan<- Action, verbose bool) error 
 		return fmt.Errorf("chmod socket: %w", err)
 	}
 
-	if verbose {
-		log.Printf("[IPC] listening on %s", socketPath)
-	}
+	logger.Info("IPC listening", "socket", socketPath)
 
 	// Accept connections in a loop
 	go func() {
@@ -64,17 +62,15 @@ func runIPCServer(socketPath string, actions chan<- Action, verbose bool) error 
 			if err != nil {
 				// Check if listener was closed (e.g., during shutdown)
 				if strings.Contains(err.Error(), "use of closed network connection") {
-					if verbose {
-						log.Printf("[IPC] listener closed")
-					}
+					logger.Debug("IPC listener closed")
 					return
 				}
-				log.Printf("[IPC] accept error: %v", err)
+				logger.Error("IPC accept error", "error", err)
 				continue
 			}
 
 			// Handle connection in a separate goroutine
-			go handleIPCConnection(conn, actions, verbose)
+			go handleIPCConnection(conn, actions, logger)
 		}
 	}()
 
@@ -82,21 +78,18 @@ func runIPCServer(socketPath string, actions chan<- Action, verbose bool) error 
 }
 
 // handleIPCConnection processes a single IPC client connection
-func handleIPCConnection(conn net.Conn, actions chan<- Action, verbose bool) {
+// handleIPCConnection handles a single IPC connection
+func handleIPCConnection(conn net.Conn, actions chan<- Action, logger *slog.Logger) {
 	defer conn.Close()
 
-	if verbose {
-		log.Printf("[IPC] connection from %s", conn.RemoteAddr())
-	}
+	logger.Debug("IPC connection", "remote_addr", conn.RemoteAddr())
 
 	scanner := bufio.NewScanner(conn)
 	encoder := json.NewEncoder(conn)
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if verbose {
-			log.Printf("[IPC] received: %s", line)
-		}
+		logger.Debug("IPC received", "line", line)
 
 		// Parse action from JSON
 		action, err := UnmarshalAction([]byte(line))
@@ -106,7 +99,7 @@ func handleIPCConnection(conn net.Conn, actions chan<- Action, verbose bool) {
 				Error:  fmt.Sprintf("parse action: %v", err),
 			}
 			if encErr := encoder.Encode(response); encErr != nil {
-				log.Printf("[IPC] failed to send error response: %v", encErr)
+				logger.Error("IPC failed to send error response", "error", encErr)
 			}
 			continue
 		}
@@ -117,7 +110,7 @@ func handleIPCConnection(conn net.Conn, actions chan<- Action, verbose bool) {
 			// Action queued successfully
 			response := IPCResponse{Status: "ok"}
 			if encErr := encoder.Encode(response); encErr != nil {
-				log.Printf("[IPC] failed to send success response: %v", encErr)
+				logger.Error("IPC failed to send success response", "error", encErr)
 			}
 		default:
 			// Action channel is full (should rarely happen with buffer)
@@ -126,18 +119,16 @@ func handleIPCConnection(conn net.Conn, actions chan<- Action, verbose bool) {
 				Error:  "action queue full",
 			}
 			if encErr := encoder.Encode(response); encErr != nil {
-				log.Printf("[IPC] failed to send error response: %v", encErr)
+				logger.Error("IPC failed to send error response", "error", encErr)
 			}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		log.Printf("[IPC] scanner error: %v", err)
+		logger.Error("IPC scanner error", "error", err)
 	}
 
-	if verbose {
-		log.Printf("[IPC] connection closed")
-	}
+	logger.Debug("IPC connection closed")
 }
 
 // ============================================================================

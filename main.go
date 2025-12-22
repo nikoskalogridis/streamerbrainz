@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -146,34 +145,44 @@ func main() {
 
 	// Validate flags
 	if *minDB > *maxDB {
-		log.Fatalf("-min must be <= -max")
+		fmt.Fprintln(os.Stderr, "error: -min must be <= -max")
+		os.Exit(1)
 	}
 	if *updateHz <= 0 || *updateHz > 1000 {
-		log.Fatalf("-update-hz must be between 1 and 1000")
+		fmt.Fprintln(os.Stderr, "error: -update-hz must be between 1 and 1000")
+		os.Exit(1)
 	}
+
+	// Setup logger
+	logger := setupLogger(*verbose)
 
 	// Open input device
 	f, err := os.Open(*inputDev)
 	if err != nil {
-		log.Fatalf("open input device %s: %v (tip: run as root or add user to 'input' group)", *inputDev, err)
+		logger.Error("failed to open input device", "device", *inputDev, "error", err, "tip", "run as root or add user to 'input' group")
+		os.Exit(1)
 	}
 	defer f.Close()
 
-	// Prepare websocket client
-	ws := newWSClient(*wsURL)
-	connectWithRetry(ws, *wsURL, *verbose)
+	// Initialize CamillaDSP client
+	client, err := NewCamillaDSPClient(*wsURL, logger, *readTimeout)
+	if err != nil {
+		logger.Error("failed to connect to CamillaDSP", "error", err)
+		os.Exit(1)
+	}
+	defer client.Close()
 
 	// Get initial volume from server
-	initialVol, err := getCurrentVolume(ws, *readTimeout, *verbose)
+	initialVol, err := client.GetVolume()
 	if err != nil {
-		log.Printf("Warning: could not get initial volume: %v", err)
-		log.Printf("Setting server volume to safe default: %.1f dB", safeDefaultDB)
+		logger.Warn("could not get initial volume", "error", err)
+		logger.Info("setting server volume to safe default", "db", safeDefaultDB)
 
 		// Actively set the server to a safe default volume
-		_, setErr := setVolumeCommand(ws, safeDefaultDB, *readTimeout, *verbose)
+		_, setErr := client.SetVolume(safeDefaultDB)
 		if setErr != nil {
-			log.Printf("Error: failed to set safe default volume: %v", setErr)
-			log.Printf("Warning: cannot verify server volume - proceeding with caution")
+			logger.Error("failed to set safe default volume", "error", setErr)
+			logger.Warn("cannot verify server volume - proceeding with caution")
 		}
 		initialVol = safeDefaultDB
 	}
@@ -190,11 +199,12 @@ func main() {
 	actions := make(chan Action, 64)
 
 	// Start daemon brain in a goroutine
-	go runDaemon(actions, ws, *wsURL, velState, *updateHz, *readTimeout, *verbose)
+	go runDaemon(actions, client, velState, *updateHz, logger)
 
 	// Start IPC server
-	if err := runIPCServer(*socketPath, actions, *verbose); err != nil {
-		log.Fatalf("start IPC server: %v", err)
+	if err := runIPCServer(*socketPath, actions, logger); err != nil {
+		logger.Error("failed to start IPC server", "error", err)
+		os.Exit(1)
 	}
 
 	// Read loop for input events
@@ -202,20 +212,23 @@ func main() {
 	readErr := make(chan error, 1)
 	go readInputEvents(f, events, readErr)
 
-	if *verbose {
-		log.Printf("argon-camilladsp-remote v%s starting", version)
-		log.Printf("Configuration:")
-		log.Printf("  Input device: %s", *inputDev)
-		log.Printf("  WebSocket URL: %s", *wsURL)
-		log.Printf("  IPC socket: %s", *socketPath)
-		log.Printf("  Volume range: %.1f dB to %.1f dB", *minDB, *maxDB)
-		log.Printf("  Update rate: %d Hz", *updateHz)
-		log.Printf("  Max velocity: %.1f dB/s", *velMax)
-		log.Printf("  Accel time: %.1f s", *accelTime)
-		log.Printf("  Decay tau: %.1f s", *decayTau)
-		log.Printf("  Read timeout: %d ms", *readTimeout)
-	}
-	log.Printf("listening on %s, IPC on %s, sending to %s (update rate: %d Hz)", *inputDev, *socketPath, *wsURL, *updateHz)
+	logger.Debug("starting argon-camilladsp-remote", "version", version)
+	logger.Debug("configuration",
+		"input_device", *inputDev,
+		"websocket_url", *wsURL,
+		"ipc_socket", *socketPath,
+		"min_db", *minDB,
+		"max_db", *maxDB,
+		"update_hz", *updateHz,
+		"vel_max", *velMax,
+		"accel_time", *accelTime,
+		"decay_tau", *decayTau,
+		"read_timeout_ms", *readTimeout)
+	logger.Info("listening",
+		"input", *inputDev,
+		"ipc", *socketPath,
+		"websocket", *wsURL,
+		"update_rate_hz", *updateHz)
 
 	// ============================================================================
 	// Main Event Loop - Input Coordination Only
@@ -234,8 +247,8 @@ func main() {
 		// Shutdown handling
 		// --------------------------------------------------------------------
 		case <-sigc:
-			log.Printf("shutting down")
-			ws.close()
+			logger.Info("shutting down")
+			client.Close()
 			f.Close()
 			return
 
@@ -243,8 +256,8 @@ func main() {
 		// Input error handling
 		// --------------------------------------------------------------------
 		case err := <-readErr:
-			log.Printf("input reader stopped: %v", err)
-			ws.close()
+			logger.Error("input reader stopped", "error", err)
+			client.Close()
 			f.Close()
 			return
 
@@ -337,8 +350,12 @@ func runLibrespotSubcommand() {
 		return
 	}
 
+	// Setup logger
+	logger := setupLogger(*verbose)
+
 	// Run hook handler (reads from environment variables)
-	if err := runLibrespotHook(*socketPath, *minDB, *maxDB, *verbose); err != nil {
-		log.Fatalf("librespot hook error: %v", err)
+	if err := runLibrespotHook(*socketPath, *minDB, *maxDB, logger); err != nil {
+		logger.Error("librespot hook error", "error", err)
+		os.Exit(1)
 	}
 }

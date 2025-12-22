@@ -26,4 +26,7 @@ const (
 	safetyZoneDB         = 12.0  // Slow down above -12dB
 	safetyVelMaxDBPerS   = 3.0   // Max velocity in safety zone (dB/s)
 	safeDefaultDB        = -45.0 // Safe default volume when query fails (dB)
+
+	// Volume update threshold
+	volumeUpdateThresholdDB = 0.02 // Minimum volume difference to send update (dB)
 )

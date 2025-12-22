@@ -19,10 +19,8 @@ import (
 func main() {
 	var (
 		wsURL    = flag.String("ws", "ws://127.0.0.1:1234", "CamillaDSP websocket URL")
-		poll     = flag.Bool("poll", false, "Enable polling mode - send GetFaders commands periodically")
-		interval = flag.Int("interval", 500, "Polling interval in milliseconds (only used with -poll)")
+		interval = flag.Int("interval", 500, "Polling interval in milliseconds")
 		command  = flag.String("cmd", "", "Send a single command and exit (e.g., 'GetVersion' or 'GetVolume')")
-		debug    = flag.Bool("debug", false, "Enable debug output - show raw JSON responses")
 	)
 	flag.Parse()
 
@@ -48,13 +46,8 @@ func main() {
 	}
 	defer conn.Close()
 
-	log.Printf("connected! (press Ctrl+C to exit)...\n")
-	if *poll {
-		log.Printf("Polling mode: will send GetFaders every %dms\n", *interval)
-	} else {
-		log.Printf("Passive mode: only listening (use -poll to enable polling)\n")
-	}
-	log.Printf("Use -cmd to send a single command and exit.\n\n")
+	log.Printf("connected! (press Ctrl+C to exit)")
+	log.Printf("polling GetFaders every %dms\n", *interval)
 
 	// Mutex to protect concurrent writes to websocket
 	var writeMu sync.Mutex
@@ -71,52 +64,53 @@ func main() {
 	defer pingTicker.Stop()
 
 	go func() {
-		for {
-			select {
-			case <-pingTicker.C:
-				writeMu.Lock()
-				err := conn.WriteMessage(websocket.PingMessage, nil)
-				writeMu.Unlock()
-				if err != nil {
-					log.Printf("ping failed: %v", err)
-					return
-				}
+		for range pingTicker.C {
+			writeMu.Lock()
+			err := conn.WriteMessage(websocket.PingMessage, nil)
+			writeMu.Unlock()
+			if err != nil {
+				log.Printf("ping failed: %v", err)
+				return
 			}
 		}
 	}()
 
 	// Handle single command mode
 	if *command != "" {
-		sendCommand(conn, &writeMu, *command, true) // verbose=true for single commands
+		sendCommand(conn, &writeMu, *command)
 		// Read response
 		messageType, message, err := conn.ReadMessage()
 		if err != nil {
 			log.Fatalf("failed to read response: %v", err)
 		}
 		if messageType == websocket.TextMessage {
-			fmt.Printf("Response: %s\n", string(message))
+			var jsonData map[string]any
+			if err := json.Unmarshal(message, &jsonData); err == nil {
+				prettyJSON, _ := json.MarshalIndent(jsonData, "", "  ")
+				fmt.Printf("%s\n", string(prettyJSON))
+			} else {
+				fmt.Printf("%s\n", string(message))
+			}
 		}
 		return
 	}
 
 	// Track last volume and mute state for change detection
 	var (
-		lastVolumeMu         sync.Mutex
-		lastVolumeHundredths *int  // volume in hundredths of dB, nil means no previous volume
-		lastMute             *bool // nil means no previous mute state
+		lastVolumeMu sync.Mutex
+		lastVolume   *float64 // nil means no previous volume
+		lastMute     *bool    // nil means no previous mute state
 	)
 
-	// Start polling if enabled
-	if *poll {
-		pollTicker := time.NewTicker(time.Duration(*interval) * time.Millisecond)
-		defer pollTicker.Stop()
+	// Start polling
+	pollTicker := time.NewTicker(time.Duration(*interval) * time.Millisecond)
+	defer pollTicker.Stop()
 
-		go func() {
-			for range pollTicker.C {
-				sendCommand(conn, &writeMu, "GetFaders", false) // verbose=false for polling
-			}
-		}()
-	}
+	go func() {
+		for range pollTicker.C {
+			sendCommand(conn, &writeMu, "GetFaders")
+		}
+	}()
 
 	// Message reading loop
 	done := make(chan struct{})
@@ -133,164 +127,12 @@ func main() {
 
 			switch messageType {
 			case websocket.TextMessage:
-				// Debug: log raw message if enabled
-				if *debug {
-					fmt.Printf("[RAW MESSAGE] %s\n", string(message))
-				}
-
-				// Try to parse and format JSON response
-				var jsonData map[string]interface{}
-				if err := json.Unmarshal(message, &jsonData); err != nil {
-					if *debug {
-						fmt.Printf("[DEBUG] JSON parse error: %v\n", err)
-					}
-					fmt.Printf("[TEXT] %s\n", string(message))
-					continue
-				}
-
-				// Debug: log parsed JSON structure if enabled
-				if *debug {
-					prettyJSON, _ := json.MarshalIndent(jsonData, "", "  ")
-					fmt.Printf("[DEBUG] Parsed JSON:\n%s\n", string(prettyJSON))
-				}
-
-				// Check if it's a GetFaders response (combined volume and mute for all faders)
-				if fadersResp, ok := jsonData["GetFaders"].(map[string]interface{}); ok {
-					if *debug {
-						fmt.Printf("[DEBUG] Found GetFaders response\n")
-					}
-					if result, _ := fadersResp["result"].(string); result == "Ok" {
-						if *debug {
-							fmt.Printf("[DEBUG] GetFaders result: Ok\n")
-						}
-						if fadersArray, ok := fadersResp["value"].([]interface{}); ok && len(fadersArray) > 0 {
-							if *debug {
-								fmt.Printf("[DEBUG] Found %d faders in response\n", len(fadersArray))
-							}
-							// Main fader is index 0
-							if mainFader, ok := fadersArray[0].(map[string]interface{}); ok {
-								if *debug {
-									fmt.Printf("[DEBUG] Main fader data: %v\n", mainFader)
-								}
-								// Extract volume and mute from main fader
-								volVal, volOk := mainFader["volume"].(float64)
-								muteVal, muteOk := mainFader["mute"].(bool)
-
-								// Convert volume to integer hundredths of dB to completely avoid
-								// floating-point comparison issues (e.g., -25.50 dB = -2550)
-								var volHundredths int
-								if volOk {
-									volHundredths = int(math.Round(volVal * 100))
-								}
-
-								if *debug {
-									if volOk {
-										fmt.Printf("[DEBUG] Extracted volume: %.2f dB (as int: %d hundredths)\n", volVal, volHundredths)
-									} else {
-										fmt.Printf("[DEBUG] Warning: volume not found or wrong type in main fader\n")
-									}
-									if muteOk {
-										fmt.Printf("[DEBUG] Extracted mute: %v\n", muteVal)
-									} else {
-										fmt.Printf("[DEBUG] Warning: mute not found or wrong type in main fader\n")
-									}
-								}
-
-								// Only process if we successfully extracted both values
-								if volOk && muteOk {
-									// Check for changes and log
-									lastVolumeMu.Lock()
-									// Compare volumes as integers to avoid floating-point precision issues
-									volChanged := lastVolumeHundredths == nil || *lastVolumeHundredths != volHundredths
-									muteChanged := lastMute == nil || *lastMute != muteVal
-
-									if *debug {
-										fmt.Printf("[DEBUG] Volume changed: %v, Mute changed: %v\n", volChanged, muteChanged)
-									}
-
-									// Update values BEFORE printing to prevent race conditions
-									// in rapid polling scenarios
-									if volChanged {
-										if lastVolumeHundredths == nil {
-											v := volHundredths
-											lastVolumeHundredths = &v
-										} else {
-											*lastVolumeHundredths = volHundredths
-										}
-									}
-
-									if muteChanged {
-										if lastMute == nil {
-											m := muteVal
-											lastMute = &m
-										} else {
-											*lastMute = muteVal
-										}
-									}
-
-									lastVolumeMu.Unlock()
-
-									// Print AFTER updating and unlocking to avoid holding lock during I/O
-									if volChanged {
-										volForPrint := float64(volHundredths) / 100.0
-										fmt.Printf("[VOLUME] %.2f dB\n", volForPrint)
-									}
-
-									if muteChanged {
-										muteStatus := "MUTED"
-										if !muteVal {
-											muteStatus = "UNMUTED"
-										}
-										fmt.Printf("[MUTE] %s\n", muteStatus)
-									}
-								} else {
-									// If extraction failed, show full response for debugging
-									if *debug {
-										fmt.Printf("[DEBUG] Failed to extract volume or mute, showing full response\n")
-									}
-									prettyJSON, _ := json.MarshalIndent(jsonData, "", "  ")
-									fmt.Printf("[RESPONSE]\n%s\n\n", string(prettyJSON))
-								}
-							} else {
-								if *debug {
-									fmt.Printf("[DEBUG] Error: main fader (index 0) is not a map\n")
-								}
-								prettyJSON, _ := json.MarshalIndent(jsonData, "", "  ")
-								fmt.Printf("[RESPONSE]\n%s\n\n", string(prettyJSON))
-							}
-						} else {
-							if *debug {
-								fmt.Printf("[DEBUG] Error: value is not an array or array is empty\n")
-							}
-							prettyJSON, _ := json.MarshalIndent(jsonData, "", "  ")
-							fmt.Printf("[RESPONSE]\n%s\n\n", string(prettyJSON))
-						}
-					} else {
-						if *debug {
-							fmt.Printf("[DEBUG] GetFaders result: %v (not Ok)\n", result)
-						}
-						prettyJSON, _ := json.MarshalIndent(jsonData, "", "  ")
-						fmt.Printf("[RESPONSE]\n%s\n\n", string(prettyJSON))
-					}
-				} else {
-					if *debug {
-						fmt.Printf("[DEBUG] Response is not GetFaders, showing full response\n")
-					}
-					// Pretty print other responses (for single command mode, etc.)
-					prettyJSON, _ := json.MarshalIndent(jsonData, "", "  ")
-					fmt.Printf("[RESPONSE]\n%s\n\n", string(prettyJSON))
-				}
+				handleTextMessage(message, &lastVolumeMu, &lastVolume, &lastMute)
 			case websocket.BinaryMessage:
-				fmt.Printf("[BINARY] %d bytes: %x\n", len(message), message)
-			case websocket.PingMessage:
-				fmt.Printf("[PING]\n")
-			case websocket.PongMessage:
-				fmt.Printf("[PONG]\n")
+				fmt.Printf("[BINARY] %d bytes\n", len(message))
 			case websocket.CloseMessage:
 				fmt.Printf("[CLOSE]\n")
 				return
-			default:
-				fmt.Printf("[UNKNOWN] type=%d, %d bytes\n", messageType, len(message))
 			}
 		}
 	}()
@@ -298,7 +140,7 @@ func main() {
 	// Wait for shutdown signal or connection close
 	select {
 	case <-sigc:
-		log.Printf("\nshutting down...")
+		log.Printf("shutting down...")
 		// Clean close
 		writeMu.Lock()
 		err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
@@ -311,14 +153,99 @@ func main() {
 	}
 }
 
-// sendCommand sends a command to the websocket server (thread-safe)
-// verbose controls whether to log the "[SENT]" message
-func sendCommand(conn *websocket.Conn, writeMu *sync.Mutex, cmd string, verbose bool) {
-	var payload []byte
-	var err error
+// handleTextMessage processes incoming text messages
+func handleTextMessage(message []byte, lastVolumeMu *sync.Mutex, lastVolume **float64, lastMute **bool) {
+	var jsonData map[string]any
+	if err := json.Unmarshal(message, &jsonData); err != nil {
+		fmt.Printf("[TEXT] %s\n", string(message))
+		return
+	}
 
-	// Commands without arguments are sent as JSON strings
-	payload, err = json.Marshal(cmd)
+	// Check if it's a GetFaders response
+	if fadersResp, ok := jsonData["GetFaders"].(map[string]any); ok {
+		handleGetFadersResponse(fadersResp, lastVolumeMu, lastVolume, lastMute)
+		return
+	}
+
+	// Pretty print other responses
+	prettyJSON, _ := json.MarshalIndent(jsonData, "", "  ")
+	fmt.Printf("[RESPONSE]\n%s\n\n", string(prettyJSON))
+}
+
+// handleGetFadersResponse processes GetFaders responses and tracks volume/mute changes
+func handleGetFadersResponse(fadersResp map[string]any, lastVolumeMu *sync.Mutex, lastVolume **float64, lastMute **bool) {
+	result, _ := fadersResp["result"].(string)
+	if result != "Ok" {
+		prettyJSON, _ := json.MarshalIndent(fadersResp, "", "  ")
+		fmt.Printf("[RESPONSE]\n%s\n\n", string(prettyJSON))
+		return
+	}
+
+	fadersArray, ok := fadersResp["value"].([]any)
+	if !ok || len(fadersArray) == 0 {
+		return
+	}
+
+	// Main fader is index 0
+	mainFader, ok := fadersArray[0].(map[string]any)
+	if !ok {
+		return
+	}
+
+	// Extract volume and mute from main fader
+	volVal, volOk := mainFader["volume"].(float64)
+	muteVal, muteOk := mainFader["mute"].(bool)
+
+	if !volOk || !muteOk {
+		return
+	}
+
+	// Round volume to 2 decimal places to avoid spurious changes
+	volVal = math.Round(volVal*100) / 100
+
+	// Check for changes and log
+	lastVolumeMu.Lock()
+	volChanged := *lastVolume == nil || math.Abs(**lastVolume-volVal) >= 0.01
+	muteChanged := *lastMute == nil || **lastMute != muteVal
+
+	// Update values
+	if volChanged {
+		if *lastVolume == nil {
+			v := volVal
+			*lastVolume = &v
+		} else {
+			**lastVolume = volVal
+		}
+	}
+
+	if muteChanged {
+		if *lastMute == nil {
+			m := muteVal
+			*lastMute = &m
+		} else {
+			**lastMute = muteVal
+		}
+	}
+
+	lastVolumeMu.Unlock()
+
+	// Print changes
+	if volChanged {
+		fmt.Printf("[VOLUME] %.2f dB\n", volVal)
+	}
+
+	if muteChanged {
+		muteStatus := "MUTED"
+		if !muteVal {
+			muteStatus = "UNMUTED"
+		}
+		fmt.Printf("[MUTE] %s\n", muteStatus)
+	}
+}
+
+// sendCommand sends a command to the websocket server (thread-safe)
+func sendCommand(conn *websocket.Conn, writeMu *sync.Mutex, cmd string) {
+	payload, err := json.Marshal(cmd)
 	if err != nil {
 		log.Printf("error marshaling command: %v", err)
 		return
@@ -330,10 +257,5 @@ func sendCommand(conn *websocket.Conn, writeMu *sync.Mutex, cmd string, verbose 
 
 	if err != nil {
 		log.Printf("error sending command: %v", err)
-		return
-	}
-
-	if verbose {
-		fmt.Printf("[SENT] %s\n", cmd)
 	}
 }

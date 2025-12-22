@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"os"
 	"strconv"
@@ -101,7 +101,7 @@ func mapSpotifyVolumeToDB(spotifyVol uint16, minDB, maxDB float64) float64 {
 }
 
 // runLibrespotHook handles librespot hook mode
-func runLibrespotHook(socketPath string, minDB, maxDB float64, verbose bool) error {
+func runLibrespotHook(socketPath string, minDB, maxDB float64, logger *slog.Logger) error {
 	// Parse event from environment
 	action, err := parseLibrespotEvent()
 	if err != nil {
@@ -110,9 +110,7 @@ func runLibrespotHook(socketPath string, minDB, maxDB float64, verbose bool) err
 
 	// Nil action means event doesn't translate yet
 	if action == nil {
-		if verbose {
-			log.Printf("[LIBRESPOT] event '%s' ignored", os.Getenv("PLAYER_EVENT"))
-		}
+		logger.Debug("librespot event ignored", "event", os.Getenv("PLAYER_EVENT"))
 		return nil
 	}
 
@@ -125,18 +123,14 @@ func runLibrespotHook(socketPath string, minDB, maxDB float64, verbose bool) err
 		}
 	}
 
-	if verbose {
-		log.Printf("[LIBRESPOT] event=%s action=%T", os.Getenv("PLAYER_EVENT"), action)
-	}
+	logger.Debug("librespot event", "event", os.Getenv("PLAYER_EVENT"), "action", fmt.Sprintf("%T", action))
 
 	// Send action via IPC
 	if err := SendIPCAction(socketPath, action); err != nil {
 		return fmt.Errorf("send IPC action: %w", err)
 	}
 
-	if verbose {
-		log.Printf("[LIBRESPOT] action sent successfully")
-	}
+	logger.Debug("librespot action sent successfully")
 
 	return nil
 }
