@@ -9,7 +9,6 @@
 /bin/
 /dist/
 /build/
-/builds/
 
 # Test binary, built with `go test -c`
 *.test

@@ -27,31 +27,31 @@ A modular Go daemon that controls [CamillaDSP](https://github.com/HEnquist/camil
 make
 
 # Or build manually
-go build -o builds/streamerbrainz .
-go build -o builds/sbctl ./cmd/sbctl
-go build -o builds/ws_listen ./cmd/ws_listen
+go build -o bin/streamerbrainz .
+go build -o bin/sbctl ./cmd/sbctl
+go build -o bin/ws_listen ./cmd/ws_listen
 
 # Clean build artifacts
 make clean
 ```
 
-All binaries are built to the `./builds` directory.
+All binaries are built to the `./bin` directory.
 
 ### Run
 
 ```bash
 # Show help and all available options
-./builds/streamerbrainz -help
+./bin/streamerbrainz -help
 
 # Show version
-./builds/streamerbrainz -version
+./bin/streamerbrainz -version
 
 # Start the daemon (requires root for IR input)
-sudo ./builds/streamerbrainz
+sudo ./bin/streamerbrainz
 
 # Control volume via CLI
-./builds/sbctl mute
-./builds/sbctl set-volume -30.0
+./bin/sbctl mute
+./bin/sbctl set-volume -30.0
 ```
 
 ---
@@ -78,8 +78,8 @@ make
 sudo make install
 
 # Or manually
-sudo cp builds/streamerbrainz /usr/local/bin/
-sudo cp builds/sbctl /usr/local/bin/
+sudo cp bin/streamerbrainz /usr/local/bin/
+sudo cp bin/sbctl /usr/local/bin/
 ```
 
 ---
@@ -350,7 +350,7 @@ streamerbrainz/
 ├── plexamp.go        # Plexamp/Plex webhook integration
 ├── constants.go      # Configuration constants
 ├── Makefile          # Build system
-├── builds/           # Compiled binaries (created by make)
+├── bin/              # Compiled binaries (created by make)
 │   ├── streamerbrainz
 │   ├── sbctl
 │   └── ws_listen
@@ -399,7 +399,7 @@ case MyAction:
 
 ```bash
 # Show help to verify parameters
-./builds/streamerbrainz -help
+./bin/streamerbrainz -help
 
 # Check if socket already exists
 rm -f /tmp/streamerbrainz.sock
@@ -410,7 +410,7 @@ sudo chmod 666 /dev/input/event6
 sudo usermod -a -G input $USER
 
 # Run with debug logging to see configuration
-sudo ./builds/streamerbrainz -log-level debug
+sudo ./bin/streamerbrainz -log-level debug
 ```
 
 **Note:** The webhooks HTTP server always runs on the configured port (default 3001), regardless of whether Plex integration is enabled.

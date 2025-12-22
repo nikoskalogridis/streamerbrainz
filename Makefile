@@ -1,7 +1,7 @@
 .PHONY: all clean install help
 
 # Build output directory
-BUILD_DIR := ./builds
+BUILD_DIR := ./bin
 
 # Binary names
 DAEMON_BIN := streamerbrainz
@@ -21,7 +21,7 @@ $(BUILD_DIR):
 
 # Build main daemon
 $(BUILD_DIR)/$(DAEMON_BIN): $(BUILD_DIR)
-	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(DAEMON_BIN) .
+	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(DAEMON_BIN) ./cmd/streamerbrainz
 
 # Build sbctl utility
 $(BUILD_DIR)/$(CTL_BIN): $(BUILD_DIR)

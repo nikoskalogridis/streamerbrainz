@@ -12,10 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Detailed usage examples and parameter documentation in help output
 - Separate help for `librespot-hook` subcommand
 - Verbose logging mode (`-v`) with configuration printout on startup
-- Makefile for building all binaries to `./builds` directory
+- Makefile for building all binaries to `./bin` directory
 - Build targets: `make`, `make clean`, `make install`, `make help`
 - CLI reference documentation (`docs/CLI-REFERENCE.md`)
-- Updated `.gitignore` to ignore `./builds` directory
+- Updated `.gitignore` to ignore `./bin` directory
 - Version constant and version display functionality
 
 ### Fixed
@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Verbose mode (`-v`) now only logs meaningful events, not internal state updates
 
 ### Changed
-- All binaries now build to `./builds/` directory instead of project root
+- All binaries now build to `./bin/` directory instead of project root
 - Velocity state updates are now silent (no logging even in verbose mode)
 - Improved documentation throughout codebase with detailed comments
 - Updated README with new build system and help documentation
