@@ -1,22 +1,11 @@
 package main
 
 import (
-	"log"
 	"sync"
 	"time"
 )
 
 // velocityState manages smooth velocity-based volume control
-//
-// The velocity system implements physics-based acceleration and decay:
-// - When a button is held, velocity accelerates toward velMaxDBPerS
-// - When released, velocity decays exponentially with time constant decayTau
-// - Target volume is updated based on current velocity
-//
-// To prevent excessive logging and updates when idle:
-// - Velocities below minVelocityThreshold are snapped to zero
-// - Logging only occurs when velocity exceeds minVelocityThreshold or button is held
-// - Updates to CamillaDSP only sent when volume difference exceeds minVolumeDiffDB
 type velocityState struct {
 	mu             sync.Mutex
 	targetDB       float64   // Target volume in dB
@@ -70,7 +59,7 @@ func (v *velocityState) updateVolume(currentVol float64) {
 }
 
 // update advances the velocity and target based on elapsed time
-func (v *velocityState) update(verbose bool) {
+func (v *velocityState) update() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -105,12 +94,6 @@ func (v *velocityState) update(verbose bool) {
 			decayFactor = 0
 		}
 		v.velocityDBPerS *= decayFactor
-
-		// Snap to zero if velocity is negligible (prevents infinite tiny updates)
-		// This eliminates logging spam when velocity has decayed to near-zero values
-		if v.velocityDBPerS > -minVelocityThreshold && v.velocityDBPerS < minVelocityThreshold {
-			v.velocityDBPerS = 0
-		}
 	}
 
 	// Update target position
@@ -124,12 +107,6 @@ func (v *velocityState) update(verbose bool) {
 	if v.targetDB > v.maxDB {
 		v.targetDB = v.maxDB
 		v.velocityDBPerS = 0
-	}
-
-	// Only log if there's meaningful activity (button held or velocity > threshold)
-	if verbose && (v.heldDirection != 0 || (v.velocityDBPerS > minVelocityThreshold || v.velocityDBPerS < -minVelocityThreshold)) {
-		log.Printf("[VEL] held=%d vel=%.2f dB/s target=%.2f dB (current=%.2f dB)",
-			v.heldDirection, v.velocityDBPerS, v.targetDB, v.currentVolume)
 	}
 }
 
@@ -151,13 +128,5 @@ func (v *velocityState) shouldSendUpdate() bool {
 
 	// Send if target differs from current by more than threshold
 	diff := v.targetDB - v.currentVolume
-	return diff > minVolumeDiffDB || diff < -minVolumeDiffDB
-}
-
-// isActive returns true if there's meaningful velocity activity
-func (v *velocityState) isActive() bool {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-
-	return v.heldDirection != 0 || (v.velocityDBPerS > minVelocityThreshold || v.velocityDBPerS < -minVelocityThreshold)
+	return diff > 0.1 || diff < -0.1
 }

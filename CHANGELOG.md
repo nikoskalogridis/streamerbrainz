@@ -19,38 +19,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Version constant and version display functionality
 
 ### Fixed
-- **Excessive verbose logging spam**: Velocity state was logging every update tick (30Hz) even when idle
-  - Added `minVelocityThreshold` constant (0.01 dB/s) to snap negligible velocities to zero
-  - Modified logging to only show when velocity exceeds threshold or button is held
-  - Prevents flooding logs with `[VEL] held=0 vel=-0.00 dB/s` messages
-- Improved `shouldSendUpdate()` threshold from 0.1 dB to 0.05 dB for more precise control
-- Added velocity decay snap-to-zero to prevent infinite tiny updates
+- **Removed excessive verbose logging**: Velocity state logging has been completely removed
+  - Velocity updates run at 30Hz but no longer produce any log output
+  - Eliminates log spam that was flooding output with `[VEL]` messages
+  - Verbose mode (`-v`) now only logs meaningful events, not internal state updates
 
 ### Changed
 - All binaries now build to `./builds/` directory instead of project root
-- Velocity logging is now conditional on meaningful activity (velocity > 0.01 dB/s)
+- Velocity state updates are now silent (no logging even in verbose mode)
 - Improved documentation throughout codebase with detailed comments
 - Updated README with new build system and help documentation
 
 ### Technical Details
 
 #### Verbose Logging Fix
-The daemon runs at 30 Hz (configurable with `-update-hz`), which caused verbose mode to log 30 times per second even when no volume changes were occurring. The issue was that velocity decay produced very small floating-point values (e.g., -0.00001) which were technically non-zero.
+The daemon runs at 30 Hz (configurable with `-update-hz`), which caused verbose mode to log 30 times per second when velocity logging was enabled. This flooded logs with internal state information that wasn't useful for troubleshooting.
 
 **Solution implemented:**
-1. Added `minVelocityThreshold = 0.01` constant in `constants.go`
-2. Snap velocity to zero when `|velocity| < minVelocityThreshold` during decay
-3. Only log when `held != 0` OR `|velocity| >= minVelocityThreshold`
+- Removed all logging from `velocity.go` update loop
+- Removed unused `verbose` parameter from `velocityState.update()` method
+- Velocity physics continue to work exactly as before, just silently
 
-This eliminates log spam while preserving all meaningful velocity state information.
-
-#### Constants Added
-```go
-const (
-    minVelocityThreshold = 0.01 // Snap velocity to zero below this (dB/s)
-    minVolumeDiffDB      = 0.05 // Only send updates when volume differs by this (dB)
-)
-```
+This keeps the logs clean while preserving all volume control functionality.
 
 ### Documentation
 - Enhanced README with build instructions and help system documentation

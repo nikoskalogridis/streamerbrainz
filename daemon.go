@@ -39,7 +39,7 @@ func runDaemon(
 
 		case <-ticker.C:
 			// Periodic velocity update and CamillaDSP synchronization
-			velState.update(verbose)
+			velState.update()
 
 			// Send update to CamillaDSP if needed
 			if velState.shouldSendUpdate() {
