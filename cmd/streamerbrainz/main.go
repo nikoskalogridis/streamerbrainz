@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 const version = "1.0.0"
@@ -47,14 +48,35 @@ func printUsage() {
 	fmt.Println("  -camilladsp-update-hz int")
 	fmt.Printf("        Update loop frequency in Hz (default %d)\n", defaultUpdateHz)
 	fmt.Println()
+	fmt.Println("  -vel-mode string")
+	fmt.Println("        Velocity mode: accelerating|constant (default \"accelerating\")")
+	fmt.Println()
 	fmt.Println("  -vel-max-db-per-sec float")
-	fmt.Printf("        Maximum velocity in dB/s (default %.1f)\n", defaultVelMaxDBPerS)
+	fmt.Printf("        Maximum velocity in dB/s (accelerating mode: max velocity; constant mode: base hold rate) (default %.1f)\n", defaultVelMaxDBPerS)
 	fmt.Println()
 	fmt.Println("  -vel-accel-time float")
-	fmt.Printf("        Time to reach max velocity in seconds (default %.1f)\n", defaultAccelTime)
+	fmt.Printf("        Time to reach max velocity in seconds (accelerating mode only) (default %.1f)\n", defaultAccelTime)
 	fmt.Println()
 	fmt.Println("  -vel-decay-tau float")
-	fmt.Printf("        Velocity decay time constant in seconds (default %.1f)\n", defaultDecayTau)
+	fmt.Printf("        Velocity decay time constant in seconds (accelerating mode only) (default %.1f)\n", defaultDecayTau)
+	fmt.Println()
+	fmt.Println("  -vel-turbo-mult float")
+	fmt.Println("        Constant mode: turbo multiplier (default 1.0; <=1 disables turbo)")
+	fmt.Println()
+	fmt.Println("  -vel-turbo-delay float")
+	fmt.Println("        Constant mode: turbo activation delay in seconds (default 0.0)")
+	fmt.Println()
+	fmt.Println("  -vel-danger-zone-db float")
+	fmt.Printf("        Size of danger zone below max volume in dB (default %.1f)\n", dangerZoneDB)
+	fmt.Println()
+	fmt.Println("  -vel-danger-vel-max-db-per-sec float")
+	fmt.Printf("        Ramp-up velocity hard cap in danger zone in dB/s (default %.1f)\n", dangerVelMaxDBPerS)
+	fmt.Println()
+	fmt.Println("  -vel-danger-vel-min-near0-db-per-sec float")
+	fmt.Printf("        Minimum ramp-up velocity near max volume in dB/s (default %.1f)\n", dangerVelMinNear0DBPerS)
+	fmt.Println()
+	fmt.Println("  -vel-hold-timeout-ms int")
+	fmt.Println("        Auto-release hold if no hold events arrive within this duration in ms (default 600)")
 	fmt.Println()
 	fmt.Println("  -ipc-socket string")
 	fmt.Printf("        Unix domain socket path for IPC (default \"/tmp/streamerbrainz.sock\")\n")
@@ -104,8 +126,9 @@ func printUsage() {
 	fmt.Println("NOTES:")
 	fmt.Println("  - Requires read access to input device (run as root or add user to 'input' group)")
 	fmt.Println("  - CamillaDSP must be running with websocket enabled (-pPORT)")
-	fmt.Println("  - Volume changes use velocity-based ramping for smooth control")
-	fmt.Println("  - Safety zone active above -12dB (slower ramping)")
+	fmt.Println("  - Volume changes use velocity-based control for smooth control")
+	fmt.Println("  - Danger zone limits ramp-up speed near max volume:")
+	fmt.Println("      dangerThreshold = camilladsp-max-db - vel-danger-zone-db")
 	fmt.Println()
 }
 
@@ -136,17 +159,33 @@ func main() {
 		camillaDspMinDb     = flag.Float64("camilladsp-min-db", -65.0, "Minimum volume clamp in dB")
 		camillaDspMaxDb     = flag.Float64("camilladsp-max-db", 0.0, "Maximum volume clamp in dB")
 		camillaDspUpdateHz  = flag.Int("camilladsp-update-hz", defaultUpdateHz, "Update loop frequency in Hz")
-		velMaxDbPerSec      = flag.Float64("vel-max-db-per-sec", defaultVelMaxDBPerS, "Maximum velocity in dB/s")
-		velAccelTime        = flag.Float64("vel-accel-time", defaultAccelTime, "Time to reach max velocity in seconds")
-		velDecayTau         = flag.Float64("vel-decay-tau", defaultDecayTau, "Velocity decay time constant in seconds")
-		ipcSocketPath       = flag.String("ipc-socket", "/tmp/streamerbrainz.sock", "Unix domain socket path for IPC")
-		webhooksPort        = flag.Int("webhooks-port", 3001, "Webhooks HTTP listener port")
-		plexServerUrl       = flag.String("plex-server-url", "", "Plex server URL (e.g., http://plex.home.arpa:32400)")
-		plexTokenFile       = flag.String("plex-token-file", "", "Path to file containing Plex authentication token")
-		plexMachineID       = flag.String("plex-machine-id", "", "Plex player machine identifier to filter sessions")
-		logLevelStr         = flag.String("log-level", "info", "Log level: error, warn, info, debug")
-		showVersion         = flag.Bool("version", false, "Print version and exit")
-		showHelp            = flag.Bool("help", false, "Print help message")
+		velMaxDbPerSec      = flag.Float64("vel-max-db-per-sec", defaultVelMaxDBPerS, "Maximum velocity in dB/s (accelerating mode: max velocity; constant mode: base hold rate)")
+		velAccelTime        = flag.Float64("vel-accel-time", defaultAccelTime, "Time to reach max velocity in seconds (accelerating mode only)")
+		velDecayTau         = flag.Float64("vel-decay-tau", defaultDecayTau, "Velocity decay time constant in seconds (accelerating mode only)")
+
+		// Velocity mode selection
+		velMode = flag.String("vel-mode", "accelerating", "Velocity mode: accelerating|constant")
+
+		// Constant-mode turbo (explicit flags)
+		velTurboMult  = flag.Float64("vel-turbo-mult", 1.0, "Constant mode: turbo multiplier (e.g. 2.0 means 2x base hold rate). <=1 disables turbo")
+		velTurboDelay = flag.Float64("vel-turbo-delay", 0.0, "Constant mode: turbo activation delay in seconds (0 = immediate)")
+
+		// Danger-zone tuning (near max volume, ramp-up only)
+		velDangerZoneDb            = flag.Float64("vel-danger-zone-db", dangerZoneDB, "Size of danger zone below max volume in dB (danger threshold is maxDB - dangerZoneDB)")
+		velDangerVelMaxDbPerSec    = flag.Float64("vel-danger-vel-max-db-per-sec", dangerVelMaxDBPerS, "Ramp-up velocity hard cap in the danger zone in dB/s")
+		velDangerVelMinNear0DbPerS = flag.Float64("vel-danger-vel-min-near0-db-per-sec", dangerVelMinNear0DBPerS, "Minimum ramp-up velocity near max volume (prevents sticky behavior) in dB/s")
+
+		// Hold behavior
+		velHoldTimeoutMs = flag.Int("vel-hold-timeout-ms", 600, "Auto-release hold if no hold events arrive within this duration (milliseconds)")
+
+		ipcSocketPath = flag.String("ipc-socket", "/tmp/streamerbrainz.sock", "Unix domain socket path for IPC")
+		webhooksPort  = flag.Int("webhooks-port", 3001, "Webhooks HTTP listener port")
+		plexServerUrl = flag.String("plex-server-url", "", "Plex server URL (e.g., http://plex.home.arpa:32400)")
+		plexTokenFile = flag.String("plex-token-file", "", "Path to file containing Plex authentication token")
+		plexMachineID = flag.String("plex-machine-id", "", "Plex player machine identifier to filter sessions")
+		logLevelStr   = flag.String("log-level", "info", "Log level: error, warn, info, debug")
+		showVersion   = flag.Bool("version", false, "Print version and exit")
+		showHelp      = flag.Bool("help", false, "Print help message")
 	)
 
 	// Custom usage function
@@ -177,6 +216,44 @@ func main() {
 	}
 	if *camillaDspUpdateHz <= 0 || *camillaDspUpdateHz > 1000 {
 		fmt.Fprintln(os.Stderr, "error: -camilladsp-update-hz must be between 1 and 1000")
+		os.Exit(1)
+	}
+
+	// Velocity mode validation
+	if *velMode != "accelerating" && *velMode != "constant" {
+		fmt.Fprintln(os.Stderr, "error: -vel-mode must be one of: accelerating, constant")
+		os.Exit(1)
+	}
+
+	// Constant-mode turbo validation
+	if *velTurboMult < 0 {
+		fmt.Fprintln(os.Stderr, "error: -vel-turbo-mult must be >= 0")
+		os.Exit(1)
+	}
+	if *velTurboDelay < 0 {
+		fmt.Fprintln(os.Stderr, "error: -vel-turbo-delay must be >= 0")
+		os.Exit(1)
+	}
+
+	// Danger-zone validation (near max volume)
+	if *velDangerZoneDb < 0 {
+		fmt.Fprintln(os.Stderr, "error: -vel-danger-zone-db must be >= 0")
+		os.Exit(1)
+	}
+	if *velDangerVelMaxDbPerSec < 0 {
+		fmt.Fprintln(os.Stderr, "error: -vel-danger-vel-max-db-per-sec must be >= 0")
+		os.Exit(1)
+	}
+	if *velDangerVelMinNear0DbPerS < 0 {
+		fmt.Fprintln(os.Stderr, "error: -vel-danger-vel-min-near0-db-per-sec must be >= 0")
+		os.Exit(1)
+	}
+	if *velDangerVelMinNear0DbPerS > *velDangerVelMaxDbPerSec {
+		fmt.Fprintln(os.Stderr, "error: -vel-danger-vel-min-near0-db-per-sec must be <= -vel-danger-vel-max-db-per-sec")
+		os.Exit(1)
+	}
+	if *velHoldTimeoutMs < 0 {
+		fmt.Fprintln(os.Stderr, "error: -vel-hold-timeout-ms must be >= 0")
 		os.Exit(1)
 	}
 
@@ -232,8 +309,38 @@ func main() {
 		initialVol = safeDefaultDB
 	}
 
-	// Initialize velocity state with known volume
-	velState := newVelocityState(*velMaxDbPerSec, *velAccelTime, *velDecayTau, *camillaDspMinDb, *camillaDspMaxDb)
+	// Initialize velocity engine
+	mode := VelocityMode(*velMode)
+
+	// Mode-specific interpretation of knobs:
+	// - accelerating: use vel-accel-time / vel-decay-tau
+	// - constant: use vel-turbo-mult / vel-turbo-delay
+	accelTime := *velAccelTime
+	decayTau := *velDecayTau
+	if mode == VelocityModeConstant {
+		accelTime = *velTurboMult
+		decayTau = *velTurboDelay
+	}
+
+	velState := newVelocityState(VelocityConfig{
+		Mode: mode,
+
+		VelMaxDBPerS: *velMaxDbPerSec,
+		AccelTime:    accelTime,
+		DecayTau:     decayTau,
+
+		MinDB: *camillaDspMinDb,
+		MaxDB: *camillaDspMaxDb,
+
+		// Robustness
+		HoldTimeout: time.Duration(*velHoldTimeoutMs) * time.Millisecond,
+		// MaxDt is configured from updateHz inside runDaemon via velState.setUpdateHz(updateHz).
+
+		// Danger zone (near max volume), ramp-up only
+		DangerZoneDB:            *velDangerZoneDb,
+		DangerVelMaxDBPerS:      *velDangerVelMaxDbPerSec,
+		DangerVelMinNear0DBPerS: *velDangerVelMinNear0DbPerS,
+	})
 	velState.updateVolume(initialVol)
 
 	// Handle shutdown
@@ -281,9 +388,16 @@ func main() {
 		"camilladsp_min_db", *camillaDspMinDb,
 		"camilladsp_max_db", *camillaDspMaxDb,
 		"camilladsp_update_hz", *camillaDspUpdateHz,
+		"vel_mode", *velMode,
 		"vel_max_db_per_sec", *velMaxDbPerSec,
 		"vel_accel_time", *velAccelTime,
 		"vel_decay_tau", *velDecayTau,
+		"vel_turbo_mult", *velTurboMult,
+		"vel_turbo_delay", *velTurboDelay,
+		"vel_danger_zone_db", *velDangerZoneDb,
+		"vel_danger_vel_max_db_per_sec", *velDangerVelMaxDbPerSec,
+		"vel_danger_vel_min_near0_db_per_sec", *velDangerVelMinNear0DbPerS,
+		"vel_hold_timeout_ms", *velHoldTimeoutMs,
 		"webhooks_port", *webhooksPort,
 		"plex_enabled", plexEnabled)
 	listenInfo := []any{"ir_device", *irDevice, "ipc", *ipcSocketPath, "camilladsp_ws", *camillaDspWsUrl, "update_rate_hz", *camillaDspUpdateHz, "webhooks_port", *webhooksPort}

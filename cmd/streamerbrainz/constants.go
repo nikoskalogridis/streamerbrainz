@@ -18,14 +18,25 @@ const (
 
 // Velocity-based volume control configuration
 const (
-	defaultUpdateHz      = 30    // Update loop frequency (Hz)
-	defaultVelMaxDBPerS  = 15.0  // Maximum velocity in dB/s
-	defaultAccelTime     = 2.0   // Time to reach max velocity (seconds)
-	defaultDecayTau      = 0.2   // Decay time constant (seconds)
-	defaultReadTimeoutMS = 500   // Default timeout for reading websocket responses (ms)
-	safetyZoneDB         = 12.0  // Slow down above -12dB
-	safetyVelMaxDBPerS   = 3.0   // Max velocity in safety zone (dB/s)
-	safeDefaultDB        = -45.0 // Safe default volume when query fails (dB)
+	defaultUpdateHz      = 30   // Update loop frequency (Hz)
+	defaultVelMaxDBPerS  = 15.0 // Maximum velocity in dB/s
+	defaultAccelTime     = 2.0  // Time to reach max velocity (seconds)
+	defaultDecayTau      = 0.2  // Decay time constant (seconds)
+	defaultReadTimeoutMS = 500  // Default timeout for reading websocket responses (ms)
+
+	// Danger zone (near max volume):
+	//
+	// The last `dangerZoneDB` dB below max volume is treated as a "danger zone" for ramp-up.
+	// Note: the threshold is computed relative to max volume: (maxDB - dangerZoneDB).
+	dangerZoneDB = 12.0 // Size of the danger zone below max volume (dB)
+
+	// Ramp-up speed limits inside the danger zone:
+	// - dangerVelMaxDBPerS: immediate hard cap when entering the danger zone
+	// - dangerVelMinNear0DBPerS: minimum ramp-up velocity near 0 dB (prevents "sticky" behavior)
+	dangerVelMaxDBPerS      = 3.0 // Max velocity in danger zone (dB/s)
+	dangerVelMinNear0DBPerS = 0.3 // Min velocity near 0 dB within danger zone (dB/s)
+
+	safeDefaultDB = -45.0 // Safe default volume when query fails (dB)
 
 	// Volume update threshold
 	volumeUpdateThresholdDB = 0.02 // Minimum volume difference to send update (dB)

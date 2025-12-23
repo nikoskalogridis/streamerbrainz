@@ -31,14 +31,22 @@ func runDaemon(
 	ticker := time.NewTicker(updateInterval)
 	defer ticker.Stop()
 
+	// Configure the velocity engine's dt clamp relative to the daemon tick rate.
+	velState.setUpdateHz(updateHz)
+
+	// Drive the engine with an explicit dt for consistent behavior and testability.
+	lastTick := time.Now()
+
 	for {
 		select {
 		case act := <-actions:
 			handleAction(act, client, velState, logger)
 
-		case <-ticker.C:
+		case now := <-ticker.C:
 			// Periodic velocity update and CamillaDSP synchronization
-			velState.update()
+			dt := now.Sub(lastTick).Seconds()
+			lastTick = now
+			velState.updateWithDt(dt, now)
 
 			// Send update to CamillaDSP if needed
 			if velState.shouldSendUpdate() {
