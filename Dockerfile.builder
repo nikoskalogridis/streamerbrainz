@@ -17,7 +17,7 @@
 # Or use the provided build-binaries.sh script for easier extraction
 
 # Stage 1: Builder
-FROM golang:1.23.4-alpine AS builder
+FROM golang:1.24.6-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git make upx file

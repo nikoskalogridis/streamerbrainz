@@ -131,6 +131,9 @@ func main() {
 	// Expand user paths
 	cfg.IPC.SocketPath = ExpandPath(cfg.IPC.SocketPath)
 	cfg.IR.Device = ExpandPath(cfg.IR.Device)
+	for i := range cfg.IR.Devices {
+		cfg.IR.Devices[i] = ExpandPath(cfg.IR.Devices[i])
+	}
 	cfg.Plex.TokenFile = ExpandPath(cfg.Plex.TokenFile)
 
 	// Validate fully materialized config
@@ -150,13 +153,26 @@ func main() {
 	// Plex enablement semantics moved to config
 	plexEnabled := cfg.Plex.Enabled
 
-	// Open input device
-	f, err := os.Open(cfg.IR.Device)
-	if err != nil {
-		logger.Error("failed to open input device", "device", cfg.IR.Device, "error", err, "tip", "run as root or add user to 'input' group")
-		os.Exit(1)
+	// Open all input devices
+	var deviceFiles []*os.File
+	for _, devicePath := range cfg.IR.Devices {
+		f, err := os.Open(devicePath)
+		if err != nil {
+			logger.Error("failed to open input device", "device", devicePath, "error", err, "tip", "run as root or add user to 'input' group")
+			// Close already opened devices
+			for _, df := range deviceFiles {
+				df.Close()
+			}
+			os.Exit(1)
+		}
+		deviceFiles = append(deviceFiles, f)
+		logger.Debug("opened input device", "device", devicePath)
 	}
-	defer f.Close()
+	defer func() {
+		for _, f := range deviceFiles {
+			f.Close()
+		}
+	}()
 
 	// Setup CamillaDSP client
 	client, err := NewCamillaDSPClient(cfg.CamillaDSP.WsURL, logger, cfg.CamillaDSP.TimeoutMS)
@@ -210,14 +226,23 @@ func main() {
 	}()
 
 	events := make(chan inputEvent, 64)
-	readErr := make(chan error, 1)
-	go readInputEvents(f, events, readErr)
+	readErr := make(chan error, len(deviceFiles))
+
+	// Start a reader goroutine for each input device
+	for i, f := range deviceFiles {
+		deviceName := cfg.IR.Devices[i]
+		go func(file *os.File, name string) {
+			logger.Debug("starting input reader", "device", name)
+			readInputEvents(file, events, readErr)
+			logger.Warn("input reader stopped", "device", name)
+		}(f, deviceName)
+	}
 
 	logger.Debug("starting streamerbrainz", "version", version)
 
 	logger.Debug("configuration",
 		"config_path", *configPath,
-		"ir_device", cfg.IR.Device,
+		"ir_devices", cfg.IR.Devices,
 		"camilladsp_ws_url", cfg.CamillaDSP.WsURL,
 		"camilladsp_ws_timeout_ms", cfg.CamillaDSP.TimeoutMS,
 		"ipc_socket", cfg.IPC.SocketPath,
@@ -238,7 +263,7 @@ func main() {
 		"plex_enabled", plexEnabled)
 
 	listenInfo := []any{
-		"ir_device", cfg.IR.Device,
+		"ir_devices", cfg.IR.Devices,
 		"ipc", cfg.IPC.SocketPath,
 		"camilladsp_ws", cfg.CamillaDSP.WsURL,
 		"update_rate_hz", cfg.CamillaDSP.UpdateHz,
@@ -269,17 +294,18 @@ func main() {
 		case <-sigc:
 			logger.Info("shutting down")
 			client.Close()
-			f.Close()
+			for _, f := range deviceFiles {
+				f.Close()
+			}
 			return
 
 		// --------------------------------------------------------------------
 		// Input error handling
 		// --------------------------------------------------------------------
 		case err := <-readErr:
-			logger.Error("input reader stopped", "error", err)
-			client.Close()
-			f.Close()
-			return
+			logger.Error("input reader error", "error", err)
+			// Note: We continue running even if one device fails
+			// This allows other devices to keep working
 
 		// --------------------------------------------------------------------
 		// IR input event handling (event translation layer)
@@ -310,6 +336,43 @@ func main() {
 			case KEY_MUTE:
 				if ev.Value == evValuePress {
 					actions <- ToggleMute{}
+				}
+
+			// Media control keys
+			case KEY_PLAYPAUSE:
+				if ev.Value == evValuePress {
+					logger.Debug("media key", "key", "play/pause")
+					// TODO: Add PlayPause action if needed
+				}
+
+			case KEY_NEXTSONG:
+				if ev.Value == evValuePress {
+					logger.Debug("media key", "key", "next")
+					// TODO: Add Next action if needed
+				}
+
+			case KEY_PREVIOUSSONG:
+				if ev.Value == evValuePress {
+					logger.Debug("media key", "key", "previous")
+					// TODO: Add Previous action if needed
+				}
+
+			case KEY_PLAYCD:
+				if ev.Value == evValuePress {
+					logger.Debug("media key", "key", "play")
+					// TODO: Add Play action if needed
+				}
+
+			case KEY_PAUSECD:
+				if ev.Value == evValuePress {
+					logger.Debug("media key", "key", "pause")
+					// TODO: Add Pause action if needed
+				}
+
+			case KEY_STOPCD:
+				if ev.Value == evValuePress {
+					logger.Debug("media key", "key", "stop")
+					// TODO: Add Stop action if needed
 				}
 			}
 		}

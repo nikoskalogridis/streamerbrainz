@@ -1,0 +1,187 @@
+# StreamerBrainz Multi-Device Input Configuration Example
+#
+# This example demonstrates how to configure StreamerBrainz to read from
+# multiple input devices simultaneously (IR remote, keyboard, USB encoders, etc.)
+#
+# Recommended location:
+#   ~/.config/streamerbrainz/config.yaml
+
+# ============================================================================
+# Input Devices Configuration
+# ============================================================================
+ir:
+  # List of input devices to monitor for key events
+  # All devices are monitored simultaneously in separate threads
+  devices:
+    # IR Remote Receiver (e.g., FLIRC USB)
+    - /dev/input/by-id/usb-FLIRC.tv_flirc-event-kbd
+
+    # Main keyboard (for media keys)
+    - /dev/input/by-id/usb-Logitech_USB_Keyboard-event-kbd
+
+    # USB Rotary Encoder / Volume Knob
+    - /dev/input/by-id/usb-Custom_Rotary_Encoder-event-if00
+
+    # USB Media Keypad
+    # - /dev/input/event8
+
+  # Alternative: Use event numbers directly (less portable)
+  # devices:
+  #   - /dev/input/event6  # IR receiver
+  #   - /dev/input/event3  # Keyboard
+  #   - /dev/input/event7  # USB volume knob
+
+  # Tips for identifying devices:
+  #
+  # 1. List all input devices with stable IDs:
+  #    ls -la /dev/input/by-id/
+  #
+  # 2. Find device capabilities and test keys:
+  #    sudo evtest /dev/input/event3
+  #
+  # 3. Show detailed device information:
+  #    cat /proc/bus/input/devices
+  #
+  # 4. Monitor all input events:
+  #    sudo cat /dev/input/event6 | hexdump -C
+
+# ============================================================================
+# Supported Key Events
+# ============================================================================
+#
+# Volume Control (fully supported):
+#   - KEY_VOLUMEUP (115)     - Increase volume with velocity control
+#   - KEY_VOLUMEDOWN (114)   - Decrease volume with velocity control
+#   - KEY_MUTE (113)         - Toggle mute
+#
+# Media Control (detected, logged, but not yet implemented):
+#   - KEY_PLAYPAUSE (164)    - Play/Pause toggle
+#   - KEY_NEXTSONG (163)     - Next track
+#   - KEY_PREVIOUSSONG (165) - Previous track
+#   - KEY_PLAYCD (200)       - Play
+#   - KEY_PAUSECD (201)      - Pause
+#   - KEY_STOPCD (166)       - Stop
+#
+# ============================================================================
+
+# ============================================================================
+# CamillaDSP Configuration
+# ============================================================================
+camilladsp:
+  # CamillaDSP WebSocket endpoint
+  ws_url: ws://127.0.0.1:1234
+
+  # WebSocket read timeout (milliseconds)
+  timeout_ms: 500
+
+  # Volume range limits (dB)
+  min_db: -65.0
+  max_db: 0.0
+
+  # Update frequency (Hz) - how often to send volume updates
+  # Higher = more responsive, but more CPU/network usage
+  update_hz: 30
+
+# ============================================================================
+# Velocity Engine Configuration
+# ============================================================================
+velocity:
+  # Volume control feel:
+  #   accelerating - Gradually accelerates while held, decays when released
+  #   constant     - Constant rate with optional turbo after delay
+  mode: accelerating
+
+  # Maximum velocity (dB/s) or base rate for constant mode
+  max_db_per_sec: 15.0
+
+  # Accelerating mode settings:
+  accel_time_sec: 2.0    # Time to reach max velocity
+  decay_tau_sec: 0.2     # Decay time constant when released
+
+  # Constant mode settings (unused in accelerating mode):
+  turbo_mult: 2.0        # Multiplier after turbo delay
+  turbo_delay_sec: 0.5   # Seconds before turbo activates
+
+  # Safety: auto-release if events stop arriving
+  hold_timeout_ms: 600
+
+  # Danger zone protection (near maximum volume):
+  danger_zone_db: 12.0                      # Last 12dB is "danger zone"
+  danger_vel_max_db_per_sec: 3.0            # Max speed in danger zone
+  danger_vel_min_near0_db_per_sec: 0.3      # Min speed near max volume
+
+# ============================================================================
+# IPC Configuration
+# ============================================================================
+ipc:
+  # Unix socket for librespot hook integration
+  socket_path: /tmp/streamerbrainz.sock
+
+# ============================================================================
+# Webhooks Configuration
+# ============================================================================
+webhooks:
+  # HTTP port for incoming webhooks (Plex, etc.)
+  port: 3001
+
+# ============================================================================
+# Plex Integration
+# ============================================================================
+plex:
+  enabled: false
+  server_url: http://plex.home.arpa:32400
+  token_file: ~/.config/streamerbrainz/plex-token
+  machine_id: YOUR_MACHINE_IDENTIFIER
+
+# ============================================================================
+# Logging
+# ============================================================================
+logging:
+  # Log level: error | warn | info | debug
+  # Use 'debug' to see all key events from all devices
+  level: info
+
+# ============================================================================
+# Permissions Notes
+# ============================================================================
+#
+# StreamerBrainz needs read access to all input devices.
+#
+# Option 1: Add user to 'input' group (recommended)
+#   sudo usermod -a -G input $USER
+#   (then log out and back in)
+#
+# Option 2: Create custom udev rules (most secure)
+#   See docs/multi-device-input.md for examples
+#
+# Option 3: Run as root (not recommended)
+#   sudo streamerbrainz -config config.yaml
+#
+# ============================================================================
+
+# ============================================================================
+# Troubleshooting
+# ============================================================================
+#
+# Device not found:
+#   - Verify device exists: ls -la /dev/input/event6
+#   - Check device is plugged in and detected by kernel
+#   - Review dmesg for USB/input errors
+#
+# Permission denied:
+#   - Check file permissions: ls -la /dev/input/event6
+#   - Verify user is in 'input' group: groups $USER
+#   - Try running with sudo temporarily to isolate issue
+#
+# Events not registering:
+#   - Set logging.level to 'debug'
+#   - Test device with: sudo evtest /dev/input/event6
+#   - Verify key codes match supported events above
+#   - Check device isn't grabbed by another process
+#
+# One device failing:
+#   - StreamerBrainz will log error but continue with other devices
+#   - Check logs for specific device that failed
+#   - Verify device path is still valid (USB re-enumeration?)
+#
+# ============================================================================

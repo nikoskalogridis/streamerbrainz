@@ -44,7 +44,8 @@ type Config struct {
 }
 
 type IRConfig struct {
-	Device string `yaml:"device"`
+	Device  string   `yaml:"device,omitempty"`  // Deprecated: use Devices instead
+	Devices []string `yaml:"devices,omitempty"` // List of input devices to monitor
 }
 
 type CamillaDSPConfig struct {
@@ -112,7 +113,7 @@ type VelocityFileConfig struct {
 func DefaultConfig() Config {
 	return Config{
 		IR: IRConfig{
-			Device: "/dev/input/event6",
+			Devices: []string{"/dev/input/event6"},
 		},
 		CamillaDSP: CamillaDSPConfig{
 			WsURL:     "ws://127.0.0.1:1234",
@@ -162,7 +163,7 @@ func LoadConfigFile(path string) (Config, error) {
 	if path == "" {
 		return Config{}, errors.New("config path is empty")
 	}
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(ExpandPath(path))
 	if err != nil {
 		return Config{}, fmt.Errorf("read config file: %w", err)
 	}
@@ -233,7 +234,9 @@ func (o FlagOverrides) Apply(cfg *Config) {
 		return
 	}
 	if o.IRDevice != nil {
+		// For backward compatibility, setting IRDevice flag sets both old and new fields
 		cfg.IR.Device = *o.IRDevice
+		cfg.IR.Devices = []string{*o.IRDevice}
 	}
 
 	if o.CamillaWsURL != nil {
@@ -312,9 +315,19 @@ func (o FlagOverrides) Apply(cfg *Config) {
 // Validate checks config invariants and returns a user-friendly error.
 // This is intended to be called after defaults + file + overrides are applied.
 func (c *Config) Validate() error {
-	// IR
-	if c.IR.Device == "" {
-		return errors.New("ir.device must not be empty")
+	// IR - support both old single device and new multiple devices
+	// Migrate old config format to new format if needed
+	if c.IR.Device != "" && len(c.IR.Devices) == 0 {
+		c.IR.Devices = []string{c.IR.Device}
+	}
+	if len(c.IR.Devices) == 0 {
+		return errors.New("ir.devices must not be empty (or use deprecated ir.device)")
+	}
+	// Validate all device paths are non-empty
+	for i, dev := range c.IR.Devices {
+		if dev == "" {
+			return fmt.Errorf("ir.devices[%d] is empty", i)
+		}
 	}
 
 	// CamillaDSP

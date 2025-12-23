@@ -14,8 +14,22 @@
 # - "~" is allowed in some paths (token_file, socket_path) and will be expanded.
 
 ir:
-  # Linux evdev input device for IR remote (must be readable by the daemon user)
-  device: /dev/input/event6
+  # Multiple Linux evdev input devices (NEW in v1.0.0+)
+  # You can specify multiple devices to monitor simultaneously
+  # (e.g., IR remote, keyboard, USB rotary encoders, media keypads)
+  devices:
+    - /dev/input/event6 # IR remote receiver
+    # - /dev/input/event3  # Keyboard (uncomment to enable)
+    # - /dev/input/event8  # USB rotary encoder (uncomment to enable)
+
+  # Legacy single-device format (DEPRECATED - use 'devices' instead)
+  # If both 'device' and 'devices' are set, 'devices' takes precedence
+  # device: /dev/input/event6
+
+  # Tips for finding your devices:
+  #   ls -la /dev/input/by-id/        # List devices by ID (more stable)
+  #   sudo evtest /dev/input/event3   # Test which keys a device sends
+  #   cat /proc/bus/input/devices     # Show all input devices with details
 
 camilladsp:
   # CamillaDSP WebSocket endpoint (CamillaDSP must be started with -pPORT)

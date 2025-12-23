@@ -4,9 +4,15 @@ package main
 const (
 	EV_KEY = 0x01
 
-	KEY_MUTE       = 113
-	KEY_VOLUMEDOWN = 114
-	KEY_VOLUMEUP   = 115
+	KEY_MUTE         = 113
+	KEY_VOLUMEDOWN   = 114
+	KEY_VOLUMEUP     = 115
+	KEY_PLAYPAUSE    = 164
+	KEY_STOPCD       = 166
+	KEY_PREVIOUSSONG = 165
+	KEY_NEXTSONG     = 163
+	KEY_PLAYCD       = 200
+	KEY_PAUSECD      = 201
 )
 
 // Input event value constants
