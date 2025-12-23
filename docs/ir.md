@@ -2,7 +2,7 @@
 
 StreamerBrainz can read volume/mute key events from a Linux input device (evdev), typically an IR receiver that shows up as `/dev/input/eventX`.
 
-This page is user-facing: how to point StreamerBrainz at the right device, required permissions, and common troubleshooting.
+This page is user-facing: how to configure StreamerBrainz to use the right device, required permissions, and common troubleshooting.
 
 ## Requirements
 
@@ -20,14 +20,26 @@ StreamerBrainz translates these key codes into internal actions:
 
 Volume up/down are treated as “held/repeat + release” to drive velocity-based ramping.
 
-## Configuration (StreamerBrainz flags)
+## Configuration
 
-- `-ir-device`  
-  Path to the Linux input event device. Default: `/dev/input/event6`
+StreamerBrainz is configured via YAML at `~/.config/streamerbrainz/config.yaml`.
 
-Example (useful for debugging; normally you’d put this in your systemd unit file):
+### IR section
 
-- `streamerbrainz -ir-device /dev/input/event6`
+```yaml
+ir:
+  # Linux evdev input device for IR remote (must be readable by the daemon user)
+  device: /dev/input/event6
+```
+
+**device**: Path to the Linux input event device (default: `/dev/input/event6`)
+
+Example config:
+
+```yaml
+ir:
+  device: /dev/input/event6
+```
 
 ## Finding the correct `/dev/input/eventX`
 
@@ -61,13 +73,13 @@ The goal is: the user running StreamerBrainz must be able to open the device fil
 
 ## Troubleshooting
 
-### “failed to open input device”
-This means StreamerBrainz could not open the `-ir-device` path.
+### "failed to open input device"
+This means StreamerBrainz could not open the device specified in `ir.device`.
 
 Checklist:
 1. Verify the device exists:
    - `ls -l /dev/input/event*`
-2. Verify you’re pointing at the correct one (`-ir-device`).
+2. Verify `ir.device` in your config points to the correct device.
 3. Check permissions:
    - `ls -l /dev/input/eventX`
 4. If running under systemd, confirm the service user matches the permissions you set.
@@ -97,14 +109,15 @@ If you’re unsure whether your IR receiver is producing the expected key codes,
 
 If you see different `KEY_*` codes, StreamerBrainz won’t react unless those keys are remapped to the expected ones (or StreamerBrainz is extended to recognize them).
 
-### Volume ramps but feels “jumpy” or “slow”
-This usually isn’t an IR issue. It’s typically velocity tuning / update rate tuning in StreamerBrainz. See:
-- `-camilladsp-update-hz`
-- `-vel-max-db-per-sec`
-- `-vel-accel-time`
-- `-vel-decay-tau`
+### Volume ramps but feels "jumpy" or "slow"
+This usually isn't an IR issue. It's typically velocity tuning / update rate tuning in StreamerBrainz. Check these config keys:
+- `camilladsp.update_hz`
+- `velocity.max_db_per_sec`
+- `velocity.accel_time_sec`
+- `velocity.decay_tau_sec`
 
 ## Notes
 
-- StreamerBrainz reads from exactly one `-ir-device` path.
-- For the authoritative list of flags and defaults, run: `streamerbrainz -help`
+- StreamerBrainz reads from exactly one `ir.device` path.
+- For a fully-documented configuration example, see: `examples/config.yaml`
+- For configuration reference, run: `streamerbrainz -help`

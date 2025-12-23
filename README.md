@@ -82,7 +82,30 @@ rsync -av bin/arm64/ pi@raspberrypi:/usr/local/bin/
 
 
 
+### Configure
+
+StreamerBrainz uses a YAML configuration file. Create your config:
+
+```bash
+mkdir -p ~/.config/streamerbrainz
+cp examples/config.yaml ~/.config/streamerbrainz/config.yaml
+```
+
+Edit `~/.config/streamerbrainz/config.yaml` to match your setup (CamillaDSP URL, IR device, etc.).
+
 ### Run
+
+StreamerBrainz uses the config at `~/.config/streamerbrainz/config.yaml` by default:
+
+```bash
+./bin/streamerbrainz
+```
+
+Or specify a config path explicitly:
+
+```bash
+./bin/streamerbrainz -config /path/to/config.yaml
+```
 
 StreamerBrainz is typically run under systemd as a user service. An example unit file is provided:
 
@@ -90,12 +113,12 @@ StreamerBrainz is typically run under systemd as a user service. An example unit
 
 For how to operate the daemon and where integration setup lives, see **Usage** below.
 
-For ad-hoc debugging you can run it manually:
+For ad-hoc debugging:
 
 ```bash
 ./bin/streamerbrainz -help
 ./bin/streamerbrainz -version
-./bin/streamerbrainz -log-level debug
+./bin/streamerbrainz -config ~/.config/streamerbrainz/config.yaml
 ```
 
 ---
@@ -135,6 +158,23 @@ sudo cp bin/streamerbrainz /usr/local/bin/
 
 ## Usage
 
+### Configuration
+
+StreamerBrainz is configured via a YAML file:
+
+**Default location:** `~/.config/streamerbrainz/config.yaml`
+
+See `examples/config.yaml` for a fully-documented example.
+
+Key configuration sections:
+- **ir**: IR remote device path
+- **camilladsp**: WebSocket URL, volume bounds, update frequency
+- **velocity**: Volume ramping behavior (accelerating vs constant mode)
+- **plex**: Plex integration settings
+- **ipc**: Socket path for librespot hook
+- **webhooks**: HTTP listener port
+- **logging**: Log level
+
 ### Normal operation: systemd
 
 StreamerBrainz is typically run under systemd as a user service. An example unit file is provided:
@@ -143,15 +183,18 @@ StreamerBrainz is typically run under systemd as a user service. An example unit
 
 ### Debugging: run manually
 
-Manual execution is mainly useful for debugging or experimenting with flags:
+Manual execution is mainly useful for debugging:
 
 ```bash
 # Show help / version
 streamerbrainz -help
 streamerbrainz -version
 
-# Debug logging
-streamerbrainz -log-level debug
+# Run with default config location
+streamerbrainz
+
+# Run with explicit config
+streamerbrainz -config ~/.config/streamerbrainz/config.yaml
 ```
 
 ### Integrations
@@ -159,16 +202,19 @@ streamerbrainz -log-level debug
 - Spotify (librespot): see `docs/spotify.md`
 - Plex/Plexamp webhooks: see `docs/plexamp.md`
 
-### Flags
+### Configuration overrides
 
-The daemon is configured via command-line flags. For the authoritative list, run:
+While the primary configuration is in `config.yaml`, you can override specific settings with flags for debugging:
+
+```bash
+streamerbrainz -config ~/.config/streamerbrainz/config.yaml -log-level debug
+```
+
+For all available flags, run:
 
 ```bash
 streamerbrainz -help
 ```
-
-Notes:
-- `-ipc-socket` is an internal mechanism used by `streamerbrainz librespot-hook` to forward librespot events into the daemon.
 
 ---
 
@@ -201,10 +247,16 @@ Developer notes (repo layout, build/test, adding new actions) live here:
 ### Daemon won't start
 
 ```bash
-# Show help to verify parameters
-./bin/streamerbrainz -help
+# Verify your config is valid
+./bin/streamerbrainz -config ~/.config/streamerbrainz/config.yaml
 
-# Run in foreground with debug logging to see configuration
+# Run in foreground with debug logging to see configuration details
+./bin/streamerbrainz -config ~/.config/streamerbrainz/config.yaml
+```
+
+Or temporarily override the log level:
+
+```bash
 ./bin/streamerbrainz -log-level debug
 ```
 

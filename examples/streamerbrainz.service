@@ -1,31 +1,14 @@
 [Unit]
 Description=StreamerBrainz daemon
-Documentation=https://github.com/yourusername/streamerbrainz
+Documentation=https://github.com/nikoskalogridis/streamerbrainz
 After=network.target
 
 [Service]
 Type=simple
 
-# Optional but a good idea: hides the runtime creds dir from other services via a mount namespace
-PrivateMounts=yes
-
-# Load encrypted credential (create with: systemd-creds encrypt --name=plex-token - - > ~/.config/streamerbrainz/plex-token.cred)
-LoadCredentialEncrypted=plex-token:%h/.config/streamerbrainz/plex-token.cred
-
-# Path to the binary
-# %d expands to the credential directory for this service
-ExecStart=%h/.local/bin/streamerbrainz \
-    -ir-device /dev/input/event6 \
-    -camilladsp-ws-url ws://127.0.0.1:1234 \
-    -ipc-socket %t/streamerbrainz.sock \
-    -camilladsp-min-db -65.0 \
-    -camilladsp-max-db 0.0 \
-    -camilladsp-update-hz 100 \
-    -webhooks-port 3001 \
-    -plex-server-url http://plex.home.arpa:32400 \
-    -plex-token-file=%d/plex-token \
-    -plex-machine-id YOUR_MACHINE_IDENTIFIER_HERE \
-    -log-level info
+# Run StreamerBrainz using the default config location (~/.config/streamerbrainz/config.yaml)
+# All configuration is in the YAML file
+ExecStart=%h/.local/bin/streamerbrainz
 
 # Restart policy
 Restart=on-failure
@@ -43,10 +26,25 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=streamerbrainz
 
+## Setup instructions:
+# 1. Copy this file to ~/.config/systemd/user/streamerbrainz.service
+# 2. Copy examples/config.yaml to ~/.config/streamerbrainz/config.yaml and edit it
+# 3. Store your Plex token in a file:
+#    mkdir -p ~/.config/streamerbrainz
+#    echo -n "YOUR_PLEX_TOKEN" > ~/.config/streamerbrainz/plex-token
+#    chmod 600 ~/.config/streamerbrainz/plex-token
+# 4. In your config.yaml, set:
+#    plex:
+#      enabled: true
+#      token_file: ~/.config/streamerbrainz/plex-token
+#      server_url: http://plex.home.arpa:32400
+#      machine_id: YOUR_MACHINE_IDENTIFIER
+# 5. Reload and start:
+#    systemctl --user daemon-reload
+#    systemctl --user enable --now streamerbrainz
+
 ## Monitoring user space service logs
-```bash
-journalctl _UID=$(id -u) _SYSTEMD_USER_UNIT=streamerbrainz.service -f
-```
+# journalctl _UID=$(id -u) _SYSTEMD_USER_UNIT=streamerbrainz.service -f
 
 [Install]
 WantedBy=default.target

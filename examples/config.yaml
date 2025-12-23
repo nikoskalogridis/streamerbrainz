@@ -1,0 +1,100 @@
+# StreamerBrainz configuration (YAML)
+#
+# Recommended location:
+#   ~/.config/streamerbrainz/config.yaml
+#
+# Run (uses default path if -config is omitted):
+#   streamerbrainz
+#
+# Or explicitly:
+#   streamerbrainz -config ~/.config/streamerbrainz/config.yaml
+#
+# Notes:
+# - Unknown keys are rejected (typos will fail fast).
+# - "~" is allowed in some paths (token_file, socket_path) and will be expanded.
+
+ir:
+  # Linux evdev input device for IR remote (must be readable by the daemon user)
+  device: /dev/input/event6
+
+camilladsp:
+  # CamillaDSP WebSocket endpoint (CamillaDSP must be started with -pPORT)
+  ws_url: ws://127.0.0.1:1234
+
+  # Read timeout for websocket responses (ms)
+  timeout_ms: 500
+
+  # Safety clamps (dB). The daemon will clamp target volume to [min_db, max_db].
+  min_db: -65.0
+  max_db: 0.0
+
+  # Daemon update loop frequency (Hz). Higher = more responsive but more WS traffic.
+  update_hz: 30
+
+velocity:
+  # Press-and-hold feel:
+  # - accelerating: accelerates up to max_db_per_sec while held; decays when released
+  # - constant: holds at a constant rate (max_db_per_sec), with optional turbo
+  mode: accelerating # accelerating | constant
+
+  # Shared:
+  # - accelerating mode: maximum velocity (dB/s)
+  # - constant mode: base hold rate (dB/s)
+  max_db_per_sec: 15.0
+
+  # Accelerating mode only:
+  # Time to reach max_db_per_sec (seconds). Smaller = ramps up faster.
+  accel_time_sec: 2.0
+  # Exponential decay time constant (seconds) when released. Smaller = stops faster.
+  decay_tau_sec: 0.2
+
+  # Constant mode only (turbo):
+  # Turbo multiplier applied to base hold rate after turbo_delay_sec.
+  # Set <= 1.0 to disable turbo.
+  turbo_mult: 2.0
+  # Turbo activation delay (seconds). 0.0 = turbo immediately.
+  turbo_delay_sec: 0.5
+
+  # Auto-release safety: if hold events stop arriving, treat as released after this duration.
+  # Helps with missing key-up events or irregular repeat events.
+  hold_timeout_ms: 600
+
+  # Danger zone near max volume (ramp-up only):
+  #
+  # The last danger_zone_db dB below max_db is treated as a "danger zone" for ramp-up:
+  #   dangerThreshold = max_db - danger_zone_db
+  #
+  # In this zone, ramp-up speed is immediately capped and then tapers toward max_db.
+  danger_zone_db: 12.0
+
+  # Ramp-up hard cap inside danger zone (dB/s). Applies immediately when entering the zone.
+  danger_vel_max_db_per_sec: 3.0
+
+  # Minimum ramp-up velocity near max_db inside danger zone (dB/s).
+  # Prevents "sticky" behavior right at the top while still being very cautious.
+  danger_vel_min_near0_db_per_sec: 0.3
+
+ipc:
+  # Unix socket used by librespot-hook -> daemon IPC.
+  socket_path: /tmp/streamerbrainz.sock
+
+webhooks:
+  # HTTP listener port for webhooks (Plex, etc.).
+  port: 3001
+
+plex:
+  # Enable Plex integration (webhooks + session polling).
+  enabled: false
+
+  # Plex Media Server base URL (e.g. http://plex.home.arpa:32400)
+  server_url: http://plex.home.arpa:32400
+
+  # Path to file containing Plex token (treat like a password).
+  token_file: ~/.config/streamerbrainz/plex-token
+
+  # Player machineIdentifier to target/filter sessions.
+  machine_id: YOUR_MACHINE_IDENTIFIER
+
+logging:
+  # error | warn | info | debug
+  level: info

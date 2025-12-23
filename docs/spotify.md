@@ -2,7 +2,7 @@
 
 This guide explains how to integrate StreamerBrainz with Spotify Connect using **librespot**.
 
-StreamerBrainz uses librespot’s **onevent hook** mechanism: librespot runs `streamerbrainz librespot-hook` on player events, and the hook forwards those events to the running StreamerBrainz daemon.
+StreamerBrainz uses librespot's **onevent hook** mechanism: librespot runs `streamerbrainz librespot-hook` on player events, and the hook forwards those events to the running StreamerBrainz daemon via a Unix socket.
 
 ## What this integration supports
 
@@ -18,26 +18,62 @@ StreamerBrainz uses librespot’s **onevent hook** mechanism: librespot runs `st
 ## Requirements
 
 - StreamerBrainz daemon installed and runnable on the same machine as librespot
+- StreamerBrainz configured (at `~/.config/streamerbrainz/config.yaml`)
 - librespot configured with `onevent`
 - Ability for librespot (the process) to execute `streamerbrainz` from `PATH` (or use an absolute path)
-- The daemon must be able to create/use its local socket (default: `/tmp/streamerbrainz.sock`)
+- The daemon must be able to create/use its IPC socket (default: `/tmp/streamerbrainz.sock`)
+
+## Configuration
+
+StreamerBrainz is configured via YAML at `~/.config/streamerbrainz/config.yaml`.
+
+### IPC socket configuration
+
+The librespot hook communicates with the daemon via a Unix socket:
+
+```yaml
+ipc:
+  # Unix socket used by librespot-hook -> daemon IPC
+  socket_path: /tmp/streamerbrainz.sock
+```
+
+**socket_path**: Path to the Unix socket (default: `/tmp/streamerbrainz.sock`)
 
 ## Setup
 
-### 1) Start StreamerBrainz daemon
-Start the daemon normally (IR is optional for Spotify integration, but the daemon must be running):
+### 1) Configure StreamerBrainz
+
+Create your config at `~/.config/streamerbrainz/config.yaml`:
 
 ```bash
-streamerbrainz -log-level info
+mkdir -p ~/.config/streamerbrainz
+cp examples/config.yaml ~/.config/streamerbrainz/config.yaml
 ```
 
-If you want to see hook activity and forwarded events:
+The default IPC socket path (`/tmp/streamerbrainz.sock`) works for most setups.
+
+### 2) Start StreamerBrainz daemon
+
+Start the daemon:
+
+```bash
+streamerbrainz
+```
+
+If you want to see hook activity and forwarded events, enable debug logging:
+
+```yaml
+logging:
+  level: debug
+```
+
+Or temporarily override via flag:
 
 ```bash
 streamerbrainz -log-level debug
 ```
 
-### 2) Configure librespot onevent hook
+### 3) Configure librespot onevent hook
 Configure librespot to run StreamerBrainz’s hook subcommand on events.
 
 Example (CLI-style):
@@ -52,20 +88,19 @@ If librespot runs under a service manager, you may prefer an absolute path:
 librespot --onevent "/usr/local/bin/streamerbrainz librespot-hook"
 ```
 
-### 3) (Optional) Use a custom socket path
-If your daemon is started with a non-default socket:
+### 4) (Optional) Use a custom socket path
 
-- daemon: `streamerbrainz -ipc-socket /path/to/socket ...`
-- librespot hook: `streamerbrainz librespot-hook -ipc-socket /path/to/socket`
+If you need a non-default socket path, configure it in `~/.config/streamerbrainz/config.yaml`:
 
-Example:
+```yaml
+ipc:
+  socket_path: /path/to/custom/streamerbrainz.sock
+```
+
+Then configure librespot to use the same path:
 
 ```bash
-# daemon
-streamerbrainz -ipc-socket /tmp/streamerbrainz.sock -log-level info
-
-# librespot
-librespot --onevent "streamerbrainz librespot-hook -ipc-socket /tmp/streamerbrainz.sock"
+librespot --onevent "streamerbrainz librespot-hook -ipc-socket /path/to/custom/streamerbrainz.sock"
 ```
 
 ## Testing the hook (manual)
@@ -101,18 +136,18 @@ You ran `streamerbrainz librespot-hook` directly without librespot (or without s
 - Or use the manual testing commands above.
 
 ### librespot runs, but nothing appears in StreamerBrainz logs
-- Start the daemon with `-log-level debug` to see more details.
+- Enable debug logging to see more details (set `logging.level: debug` in config or run with `-log-level debug`).
 - Confirm librespot is actually invoking the hook:
   - Use an absolute path in `--onevent`
   - Ensure the librespot service environment includes a suitable `PATH`
 
 ### Hook fails with IPC connection errors (connection refused / no such file)
-The daemon isn’t running, or the socket path doesn’t match.
+The daemon isn't running, or the socket path doesn't match.
 
 - Ensure the daemon is running.
 - Ensure the daemon and hook agree on the socket path:
-  - daemon flag: `-ipc-socket`
-  - hook flag: `librespot-hook -ipc-socket`
+  - daemon config: `ipc.socket_path` in `~/.config/streamerbrainz/config.yaml`
+  - hook flag: `librespot-hook -ipc-socket` (must match the config)
 - Check that the socket exists:
   ```bash
   ls -l /tmp/streamerbrainz.sock
@@ -144,4 +179,5 @@ Other librespot events may exist and may be ignored for now.
 
 ## See also
 - Main README: `../README.md`
+- Configuration example: `../examples/config.yaml`
 - Planned features: `PLANNED.md`
