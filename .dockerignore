@@ -59,8 +59,10 @@ vendor/
 .gitlab-ci.yml
 .travis.yml
 
-# Ignore Docker files (don't need in build context except Dockerfile itself)
+# Ignore removed container deployment artifacts
 docker-compose.yml
+docker-build.sh
+Dockerfile
 .dockerignore
 
 # Ignore development files

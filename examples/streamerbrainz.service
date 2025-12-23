@@ -1,5 +1,5 @@
 [Unit]
-Description=StreamerBrainz Daemon with Plexamp Integration
+Description=StreamerBrainz daemon
 Documentation=https://github.com/yourusername/streamerbrainz
 After=network.target
 
@@ -42,6 +42,11 @@ PrivateTmp=true
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=streamerbrainz
+
+## Monitoring user space service logs
+```bash
+journalctl _UID=$(id -u) _SYSTEMD_USER_UNIT=streamerbrainz.service -f
+```
 
 [Install]
 WantedBy=default.target

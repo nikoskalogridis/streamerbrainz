@@ -1,24 +1,17 @@
-.PHONY: all clean install help docker-build docker-build-all docker-build-amd64 docker-build-arm64 docker-push docker-clean build-binaries build-binaries-amd64 build-binaries-arm64 build-binaries-all clean-binaries
+.PHONY: all clean install help build-binaries build-binaries-amd64 build-binaries-arm64 build-binaries-all clean-binaries
 
 # Build output directory
 BUILD_DIR := ./bin
 
-# Binary names
+# Binary name
 DAEMON_BIN := streamerbrainz
-CTL_BIN := sbctl
-LISTEN_BIN := ws_listen
 
 # Go build flags
 GO := go
 GOFLAGS := -v
 LDFLAGS := -s -w
 
-# Docker configuration
-DOCKER_IMAGE := streamerbrainz
-DOCKER_TAG := latest
-DOCKER_REGISTRY :=
-
-all: $(BUILD_DIR)/$(DAEMON_BIN) $(BUILD_DIR)/$(CTL_BIN) $(BUILD_DIR)/$(LISTEN_BIN)
+all: $(BUILD_DIR)/$(DAEMON_BIN)
 
 # Create build directory
 $(BUILD_DIR):
@@ -28,49 +21,16 @@ $(BUILD_DIR):
 $(BUILD_DIR)/$(DAEMON_BIN): $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(DAEMON_BIN) ./cmd/streamerbrainz
 
-# Build sbctl utility
-$(BUILD_DIR)/$(CTL_BIN): $(BUILD_DIR)
-	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(CTL_BIN) ./cmd/sbctl
 
-# Build ws_listen example
-$(BUILD_DIR)/$(LISTEN_BIN): $(BUILD_DIR)
-	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(LISTEN_BIN) ./cmd/ws_listen
 
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f $(DAEMON_BIN) $(CTL_BIN)
-	rm -f cmd/sbctl/$(CTL_BIN)
-	rm -f cmd/ws_listen/$(LISTEN_BIN)
+	rm -f $(DAEMON_BIN)
 
-# Install binaries to /usr/local/bin (requires sudo)
+# Install binary to /usr/local/bin (requires sudo)
 install: all
 	install -m 755 $(BUILD_DIR)/$(DAEMON_BIN) /usr/local/bin/
-	install -m 755 $(BUILD_DIR)/$(CTL_BIN) /usr/local/bin/
-
-# Docker build for current architecture
-docker-build:
-	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
-
-# Docker build for all architectures (amd64 + arm64)
-docker-build-all:
-	./docker-build.sh --all --tag $(DOCKER_TAG)
-
-# Docker build for amd64 only
-docker-build-amd64:
-	./docker-build.sh --amd64 --tag $(DOCKER_TAG)
-
-# Docker build for arm64 (Raspberry Pi 4+) only
-docker-build-arm64:
-	./docker-build.sh --arm64 --tag $(DOCKER_TAG)
-
-# Docker build and push to registry
-docker-push:
-	./docker-build.sh --all --push --tag $(DOCKER_TAG) --registry $(DOCKER_REGISTRY)
-
-# Clean Docker images
-docker-clean:
-	docker rmi $(DOCKER_IMAGE):$(DOCKER_TAG) 2>/dev/null || true
 
 # Build standalone binaries for all architectures
 build-binaries-all:
@@ -95,20 +55,12 @@ clean-binaries:
 help:
 	@echo "Available targets:"
 	@echo ""
-	@echo "Build targets:"
-	@echo "  all               - Build all binaries (default)"
-	@echo "  clean             - Remove build artifacts"
-	@echo "  install           - Install binaries to /usr/local/bin"
+	@echo "Native build targets:"
+	@echo "  all                 - Build streamerbrainz (default)"
+	@echo "  clean               - Remove build artifacts"
+	@echo "  install             - Install streamerbrainz to /usr/local/bin"
 	@echo ""
-	@echo "Docker targets:"
-	@echo "  docker-build       - Build Docker image for current architecture"
-	@echo "  docker-build-all   - Build Docker image for all architectures (amd64, arm64)"
-	@echo "  docker-build-amd64 - Build Docker image for amd64 only"
-	@echo "  docker-build-arm64 - Build Docker image for arm64 (Raspberry Pi 4+) only"
-	@echo "  docker-push        - Build and push multi-arch images to registry"
-	@echo "  docker-clean       - Remove Docker images"
-	@echo ""
-	@echo "Binary build targets (for deployment without Docker):"
+	@echo "Docker-based binary builds (for deployment without Docker):"
 	@echo "  build-binaries-all   - Build standalone binaries for all architectures"
 	@echo "  build-binaries-amd64 - Build standalone binaries for amd64 only"
 	@echo "  build-binaries-arm64 - Build standalone binaries for arm64 (Raspberry Pi 4+)"

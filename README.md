@@ -2,19 +2,18 @@
 
 **Multi-source volume controller for CamillaDSP with velocity-based control**
 
-A modular Go daemon that controls [CamillaDSP](https://github.com/HEnquist/camilladsp) volume from multiple input sources including IR remotes, command-line tools, audio players (librespot, Plexamp), and custom scripts.
+StreamerBrainz sits between your inputs/players and CamillaDSP. It listens for volume/mute intent (IR remotes, Spotify Connect via librespot hooks, Plex webhooks) and applies it to CamillaDSP using a velocity-based engine for smooth “press-and-hold” control with safety limits.
+
+**Security note:** StreamerBrainz is expected to run on a trusted local network and should not be exposed directly to the public internet (e.g., the webhook listener).
 
 ---
 
 ## Features
 
 - 🎛️ **Velocity-based volume control** - Smooth, physics-based acceleration/deceleration
-- 🔌 **Multi-source input** - IR remote, IPC, command-line, scripts, Spotify (librespot), Plex/Plexamp
+- 🔌 **Multi-source input** - IR remote + player integrations (librespot hook, Plex/Plexamp webhook)
 - 🔒 **Safety limits** - Configurable min/max volume bounds
-- 🚀 **High performance** - 100Hz update rate, minimal latency
-- 🔧 **Production-ready** - Comprehensive error handling, logging, and testing
-- 🔄 **WebSocket reconnection** - Automatic reconnection to CamillaDSP
-- 🎯 **Zero dependencies** - Pure Go, standalone binaries
+- 🔧 **Operationally friendly** - Works well as a systemd `--user` service (example unit included)
 
 ---
 
@@ -30,8 +29,6 @@ make
 
 # Or build manually
 go build -o bin/streamerbrainz ./cmd/streamerbrainz
-go build -o bin/sbctl ./cmd/sbctl
-go build -o bin/ws_listen ./cmd/ws_listen
 
 # Clean build artifacts
 make clean
@@ -63,13 +60,9 @@ make build-binaries-all
 ```
 bin/
 ├── amd64/           # x86_64 binaries (compressed with UPX)
-│   ├── streamerbrainz
-│   ├── sbctl
-│   └── ws_listen
+│   └── streamerbrainz
 └── arm64/           # ARM64 binaries for Raspberry Pi 4+
-    ├── streamerbrainz
-    ├── sbctl
-    └── ws_listen
+    └── streamerbrainz
 ```
 
 **Deploy to Raspberry Pi:**
@@ -87,42 +80,22 @@ rsync -av bin/arm64/ pi@raspberrypi:/usr/local/bin/
 - ✅ Ready to run on target systems
 - ✅ No Go installation required on targets
 
-#### Docker Build (For Containers)
 
-```bash
-# Build for current architecture
-make docker-build
-
-# Build for all architectures (amd64 + arm64)
-make docker-build-all
-
-# Build for Raspberry Pi 4+ (arm64)
-make docker-build-arm64
-
-# Build and push to registry
-make docker-push DOCKER_REGISTRY=ghcr.io/username
-
-# Or use the build script directly
-./docker-build.sh --all              # All architectures
-./docker-build.sh --arm64 --tag rpi4 # Raspberry Pi only
-./docker-build.sh --help             # Show all options
-```
 
 ### Run
 
+StreamerBrainz is typically run under systemd as a user service. An example unit file is provided:
+
+- `examples/streamerbrainz.service`
+
+For how to operate the daemon and where integration setup lives, see **Usage** below.
+
+For ad-hoc debugging you can run it manually:
+
 ```bash
-# Show help and all available options
 ./bin/streamerbrainz -help
-
-# Show version
 ./bin/streamerbrainz -version
-
-# Start the daemon (requires root for IR input)
-sudo ./bin/streamerbrainz
-
-# Control volume via CLI
-./bin/sbctl mute
-./bin/sbctl set-volume -30.0
+./bin/streamerbrainz -log-level debug
 ```
 
 ---
@@ -145,7 +118,7 @@ sudo ./bin/streamerbrainz
 ### From Source
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/nikoskalogridis/streamerbrainz
 cd streamerbrainz
 
 # Build all binaries
@@ -156,396 +129,70 @@ sudo make install
 
 # Or manually
 sudo cp bin/streamerbrainz /usr/local/bin/
-sudo cp bin/sbctl /usr/local/bin/
-```
-
-### Docker Installation
-
-```bash
-# Pull pre-built image (if available)
-docker pull ghcr.io/username/streamerbrainz:latest
-
-# Or build locally
-make docker-build
-
-# Run with Docker
-docker run --rm \
-  --device /dev/input/event6:/dev/input/event6 \
-  --network host \
-  streamerbrainz:latest \
-  streamerbrainz -ir-device /dev/input/event6 -log-level info
-
-# Or use docker-compose
-docker-compose up -d
-
-# View logs
-docker-compose logs -f streamerbrainz
 ```
 
 ---
 
 ## Usage
 
-### Docker Deployment
+### Normal operation: systemd
 
-#### Using Docker Run
+StreamerBrainz is typically run under systemd as a user service. An example unit file is provided:
 
-```bash
-# Basic usage with IR remote and CamillaDSP
-docker run -d \
-  --name streamerbrainz \
-  --restart unless-stopped \
-  --device /dev/input/event6:/dev/input/event6 \
-  --network host \
-  -v /tmp:/tmp \
-  streamerbrainz:latest \
-  streamerbrainz \
-    -ir-device /dev/input/event6 \
-    -camilladsp-ws-url ws://127.0.0.1:1234 \
-    -ipc-socket /tmp/streamerbrainz.sock \
-    -log-level info
+- `examples/streamerbrainz.service`
 
-# With Plex integration
-docker run -d \
-  --name streamerbrainz \
-  --restart unless-stopped \
-  --device /dev/input/event6:/dev/input/event6 \
-  --network host \
-  -v /tmp:/tmp \
-  -v /path/to/plex-token:/run/secrets/plex-token:ro \
-  streamerbrainz:latest \
-  streamerbrainz \
-    -ir-device /dev/input/event6 \
-    -camilladsp-ws-url ws://127.0.0.1:1234 \
-    -plex-server-url http://plex.home.arpa:32400 \
-    -plex-token-file /run/secrets/plex-token \
-    -plex-machine-id YOUR_MACHINE_ID \
-    -log-level info
-```
+### Debugging: run manually
 
-#### Using Docker Compose
-
-Edit `docker-compose.yml` to customize settings, then:
+Manual execution is mainly useful for debugging or experimenting with flags:
 
 ```bash
-# Start services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f streamerbrainz
-
-# Stop services
-docker-compose down
-
-# Update and restart
-docker-compose pull
-docker-compose up -d
-```
-
-### Daemon
-
-```bash
-# Show comprehensive help
+# Show help / version
 streamerbrainz -help
-
-# Show version
 streamerbrainz -version
 
-# Basic usage
-sudo streamerbrainz
-
-# Custom configuration
-streamerbrainz \
-  -ir-device /dev/input/event6 \
-  -camilladsp-ws-url ws://127.0.0.1:1234 \
-  -ipc-socket /tmp/streamerbrainz.sock \
-  -camilladsp-min-db -65.0 \
-  -camilladsp-max-db 0.0 \
-  -log-level debug
-
-# Run with debug logging to see all parameters
-sudo streamerbrainz -log-level debug
+# Debug logging
+streamerbrainz -log-level debug
 ```
 
-**Command-line flags:**
-- `-ir-device string` - Linux input event device for IR (default: `/dev/input/event6`)
-- `-camilladsp-ws-url string` - CamillaDSP WebSocket URL (default: `ws://127.0.0.1:1234`)
-- `-camilladsp-ws-timeout-ms int` - Websocket read timeout in ms (default: `500`)
-- `-camilladsp-min-db float` - Minimum volume in dB (default: `-65.0`)
-- `-camilladsp-max-db float` - Maximum volume in dB (default: `0.0`)
-- `-camilladsp-update-hz int` - Update loop frequency in Hz (default: `30`)
-- `-vel-max-db-per-sec float` - Maximum velocity in dB/s (default: `15.0`)
-- `-vel-accel-time float` - Time to reach max velocity in seconds (default: `2.0`)
-- `-vel-decay-tau float` - Velocity decay time constant in seconds (default: `0.2`)
-- `-ipc-socket string` - Unix domain socket path for IPC (default: `/tmp/streamerbrainz.sock`)
-- `-webhooks-port int` - Webhooks HTTP listener port (default: `3001`)
-- `-plex-server-url string` - Plex server URL (enables Plex integration when set)
-- `-plex-token-file string` - Path to file with Plex authentication token
-- `-plex-machine-id string` - Plex player machine identifier
-- `-log-level string` - Log level: error, warn, info, debug (default: `info`)
-- `-version` - Print version and exit
-- `-help` - Print comprehensive help message
+### Integrations
 
-Run `streamerbrainz -help` for detailed usage examples and notes.
+- Spotify (librespot): see `docs/spotify.md`
+- Plex/Plexamp webhooks: see `docs/plexamp.md`
 
-### CLI Tool (sbctl)
+### Flags
+
+The daemon is configured via command-line flags. For the authoritative list, run:
 
 ```bash
-# Toggle mute
-sbctl mute
-
-# Set absolute volume
-sbctl set-volume -30.0
-sbctl set -25.5
-
-# Simulate IR button presses
-sbctl volume-up
-sbctl volume-down
-sbctl release
-
-# Use custom socket
-sbctl -ipc-socket /tmp/streamerbrainz.sock mute
+streamerbrainz -help
 ```
 
-### Python API
-
-```python
-from examples.python_client import StreamerBrainzClient
-
-client = StreamerBrainzClient()
-client.toggle_mute()
-client.set_volume(-30.0)
-client.volume_up()
-client.release()
-```
-
-### Bash Scripting
-
-```bash
-# Source the bash client
-./examples/bash_client.sh mute
-./examples/bash_client.sh set -30.0
-
-# Or use raw JSON
-echo '{"type":"toggle_mute"}' | nc -U /tmp/streamerbrainz.sock
-```
-
-### Librespot (Spotify Connect)
-
-```bash
-# Show librespot-hook help
-streamerbrainz librespot-hook -help
-
-# Configure librespot to use the hook
-librespot --onevent streamerbrainz librespot-hook ...
-
-# Test manually with environment variables
-PLAYER_EVENT=volume_changed VOLUME=32768 ./streamerbrainz librespot-hook -log-level debug
-PLAYER_EVENT=playing TRACK_ID=test ./streamerbrainz librespot-hook -log-level debug
-
-# Use custom socket
-PLAYER_EVENT=playing ./streamerbrainz librespot-hook -ipc-socket /tmp/custom.sock
-```
-
-**Librespot hook options:**
-- `-ipc-socket string` - Unix domain socket path for IPC (default: `/tmp/streamerbrainz.sock`)
-- `-log-level string` - Log level: error, warn, info, debug (default: `info`)
-- `-help` - Print librespot-hook help message
-
-### Plexamp/Plex Webhook
-
-The main daemon includes a webhooks HTTP server that always runs. Plex integration is automatically enabled when you provide the required Plex configuration parameters.
-
-```bash
-# Start daemon with Plexamp webhook integration
-streamerbrainz \
-  -plex-server-url http://plex.home.arpa:32400 \
-  -plex-token-file /path/to/plex-token \
-  -plex-machine-id YOUR_MACHINE_IDENTIFIER
-
-# With custom webhook port and debug logging
-streamerbrainz \
-  -webhooks-port 8080 \
-  -plex-server-url http://192.168.1.100:32400 \
-  -plex-token-file /path/to/plex-token \
-  -plex-machine-id YOUR_MACHINE_ID \
-  -log-level debug
-```
-
-**Plex webhook options:**
-- `-webhooks-port int` - HTTP webhook listener port (default: `3001`)
-- `-plex-server-url string` - Plex server URL (e.g., `http://plex.home.arpa:32400`) - enables Plex integration when set
-- `-plex-token-file string` - Path to file containing Plex authentication token (required for Plex)
-- `-plex-machine-id string` - Player machine identifier to filter sessions (required for Plex)
-
-**Setup:**
-1. Get your Plex token from [Plex support](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/)
-2. Find your player's machine identifier:
-   ```bash
-   # Use the helper script (requires curl)
-   ./examples/get-plex-machine-id.sh plex.home.arpa:32400 YOUR_PLEX_TOKEN
-   ```
-3. Start the daemon with required Plex parameters (integration enables automatically)
-4. Configure Plex webhooks in Settings > Webhooks to point to `http://your-server:3001/webhooks/plex`
-
-**How it works:**
-- The daemon runs an HTTP webhook server alongside IR input and IPC handlers
-- When Plex sends a webhook, the server queries `/status/sessions?X-Plex-Token=XXX`
-- The response is parsed (XML) and filtered by `machineIdentifier` to find the specific player
-- A `PlexStateChanged` action is sent directly to the action channel with track info (title, artist, album, state, position)
-- Currently logs the event; future versions can trigger actions based on playback state (e.g., pause fade-out)
+Notes:
+- `-ipc-socket` is an internal mechanism used by `streamerbrainz librespot-hook` to forward librespot events into the daemon.
 
 ---
 
-## Architecture
 
-```
-┌─────────────┐
-│  IR Remote  │──┐
-└─────────────┘  │
-                 │
-┌─────────────┐  │     ┌─────────────┐     ┌──────────────┐
-│    sbctl    │──┼────▶│   Actions   │────▶│    Daemon    │
-└─────────────┘  │     │   Channel   │     │     Loop     │
-                 │     └─────────────┘     └──────┬───────┘
-┌─────────────┐  │                                │
-│   Scripts   │──┘                                ▼
-└─────────────┘                          ┌─────────────────┐
-                                         │  CamillaDSP     │
-                                         │  (WebSocket)    │
-                                         └─────────────────┘
-```
-
-### Key Components
-
-1. **Action-Based Architecture** - All inputs translated to typed actions
-2. **Central Daemon Loop** - Single goroutine owns state and CamillaDSP communication
-3. **Velocity Control** - Physics-based smooth volume changes
-4. **IPC Server** - Unix domain socket for external control
-5. **WebSocket Client** - Automatic reconnection to CamillaDSP
-
----
-
-## IPC Protocol
-
-The daemon accepts JSON commands via a Unix domain socket.
-
-### Request Format
-
-```json
-{
-  "type": "action_type",
-  "data": { ... }
-}
-```
-
-### Response Format
-
-Success:
-```json
-{"status": "ok"}
-```
-
-Error:
-```json
-{"status": "error", "error": "message"}
-```
-
-### Action Types
-
-| Action | Type | Data | Example |
-|--------|------|------|---------|
-| Toggle Mute | `toggle_mute` | - | `{"type":"toggle_mute"}` |
-| Set Volume | `set_volume_absolute` | `db`, `origin` | `{"type":"set_volume_absolute","data":{"db":-30.0,"origin":"cli"}}` |
-| Volume Up | `volume_held` | `direction`: 1 | `{"type":"volume_held","data":{"direction":1}}` |
-| Volume Down | `volume_held` | `direction`: -1 | `{"type":"volume_held","data":{"direction":-1}}` |
-| Release | `volume_release` | - | `{"type":"volume_release"}` |
-
----
 
 ## Documentation
 
-- [Quick Start Guide](docs/QUICKSTART.md) - Detailed usage examples
-- [Architecture](ARCHITECTURE.md) - System design and internals
-- [Phase 2: IPC](docs/phase2-ipc.md) - IPC implementation details
-- [File Structure](FILE_STRUCTURE.md) - Code organization
-- [Protocol](protocol.md) - CamillaDSP WebSocket protocol
+- [Architecture](docs/ARCHITECTURE.md) - System design and internals
+
+- [CamillaDSP integration](docs/camilladsp.md) - Setup/configuration/troubleshooting
+- [IR integration (Linux evdev)](docs/ir.md) - Setup/configuration/troubleshooting
+- [Plex Integration (Webhooks)](docs/plexamp.md) - User setup/configuration/troubleshooting
+- [Spotify integration (librespot)](docs/spotify.md) - User setup/configuration/troubleshooting
+- [Planned Features](docs/PLANNED.md) - Intended (not yet implemented) features
+- [Development](docs/DEVELOPMENT.md) - Building, testing, and contributing
 
 ---
 
-## Testing
 
-```bash
-# Run integration tests
-./test-ipc.sh
-
-# Run with verbose output
-./test-ipc.sh -v
-
-# Test with custom socket
-./test-ipc.sh -s /tmp/custom.sock
-```
-
----
 
 ## Development
 
-### Project Structure
-
-```
-streamerbrainz/
-├── main.go           # Entry point, main event loop, and help system
-├── daemon.go         # Central daemon loop
-├── actions.go        # Action types and JSON encoding
-├── velocity.go       # Velocity-based control logic
-├── camilladsp.go     # CamillaDSP commands
-├── websocket.go      # WebSocket client
-├── input.go          # IR input event handling
-├── ipc.go            # IPC server
-├── librespot.go      # Librespot integration
-├── plexamp.go        # Plexamp/Plex webhook integration
-├── constants.go      # Configuration constants
-├── Makefile          # Build system
-├── bin/              # Compiled binaries (created by make)
-│   ├── streamerbrainz
-│   ├── sbctl
-│   └── ws_listen
-├── cmd/
-│   ├── sbctl/        # CLI tool
-│   └── ws_listen/    # WebSocket listener example
-├── examples/
-│   ├── python_client.py
-│   └── bash_client.sh
-├── docs/
-│   ├── QUICKSTART.md
-│   └── phase2-ipc.md
-└── test-ipc.sh       # Integration tests
-```
-
-### Adding New Action Types
-
-1. Define action struct in `actions.go`:
-```go
-type MyAction struct {
-    Value string `json:"value"`
-}
-```
-
-2. Add to `MarshalAction()` and `UnmarshalAction()`:
-```go
-case "my_action":
-    var a MyAction
-    if err := json.Unmarshal(env.Data, &a); err != nil {
-        return nil, err
-    }
-    return a, nil
-```
-
-3. Handle in `daemon.go`:
-```go
-case MyAction:
-    // Handle action
-```
+Developer notes (repo layout, build/test, adding new actions) live here:
+- [Development](docs/DEVELOPMENT.md)
 
 ---
 
@@ -557,51 +204,27 @@ case MyAction:
 # Show help to verify parameters
 ./bin/streamerbrainz -help
 
-# Check if socket already exists
-rm -f /tmp/streamerbrainz.sock
-
-# Check IR device permissions
-sudo chmod 666 /dev/input/event6
-# Or add user to input group
-sudo usermod -a -G input $USER
-
-# Run with debug logging to see configuration
-sudo ./bin/streamerbrainz -log-level debug
+# Run in foreground with debug logging to see configuration
+./bin/streamerbrainz -log-level debug
 ```
 
 **Note:** The webhooks HTTP server always runs on the configured port (default 3001), regardless of whether Plex integration is enabled.
 
-### IPC connection refused
+### IR input / permissions issues
 
-```bash
-# Check if daemon is running
-ps aux | grep streamerbrainz
+See: `docs/ir.md`
 
-# Check IPC socket exists
-ls -l /tmp/streamerbrainz.sock
+### CamillaDSP connection / volume not changing
 
-# Enable debug logging
-sudo ./streamerbrainz -log-level debug
-```
+See: `docs/camilladsp.md`
 
-### Volume not changing
+### Librespot hook / IPC issues
 
-```bash
-# Check CamillaDSP is running
-curl http://127.0.0.1:1234/api/v1/status
+See: `docs/spotify.md`
 
-# Check WebSocket URL
-sudo ./streamerbrainz -camilladsp-ws-url ws://127.0.0.1:1234 -log-level debug
-```
+### Plex hook / IPC issues
 
----
-
-## Roadmap
-
-- [x] **Phase 1**: Core refactoring and modular architecture
-- [x] **Phase 2**: IPC server and multi-source input
-- [x] **Phase 3**: librespot integration
-- [ ] **Phase 4**: Advanced features (fade, config switching, source priority)
+See: `docs/plexamp.md`
 
 ---
 

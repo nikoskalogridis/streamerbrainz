@@ -1,8 +1,8 @@
 #!/bin/bash
 # build-binaries.sh - Build and extract binaries for multiple architectures
 #
-# This script uses Docker to cross-compile StreamerBrainz binaries for different
-# platforms and extracts them to the bin/ directory, organized by architecture.
+# This script uses Docker to cross-compile the StreamerBrainz daemon binary for different
+# platforms and extracts it to the bin/ directory, organized by architecture.
 #
 # Usage:
 #   ./build-binaries.sh                    # Build for all architectures
@@ -79,17 +79,11 @@ OUTPUT:
 
     bin/
     ├── amd64/
-    │   ├── streamerbrainz
-    │   ├── sbctl
-    │   └── ws_listen
+    │   └── streamerbrainz
     ├── arm64/
-    │   ├── streamerbrainz
-    │   ├── sbctl
-    │   └── ws_listen
+    │   └── streamerbrainz
     └── armv7/
-        ├── streamerbrainz
-        ├── sbctl
-        └── ws_listen
+        └── streamerbrainz
 
 EXAMPLES:
     # Build for all architectures
@@ -382,7 +376,7 @@ main() {
     echo "     scp bin/arm64/* pi@raspberrypi:/usr/local/bin/"
     echo "     scp bin/amd64/* user@server:/usr/local/bin/"
     echo "  3. On target system, make binaries executable:"
-    echo "     chmod +x /usr/local/bin/streamerbrainz /usr/local/bin/sbctl /usr/local/bin/ws_listen"
+    echo "     chmod +x /usr/local/bin/streamerbrainz"
     echo ""
 
     print_success "All builds completed successfully!"

@@ -1,5 +1,5 @@
-# Dockerfile.builder - Build binaries for multiple architectures
-# This Dockerfile is designed to produce standalone binaries that can be extracted
+# Dockerfile.builder - Build the StreamerBrainz daemon binary for multiple architectures
+# This Dockerfile produces a standalone `streamerbrainz` binary that can be extracted
 # and run on target systems without Docker.
 #
 # Usage:
@@ -9,7 +9,7 @@
 #   # Build for arm64 (Raspberry Pi 4+)
 #   docker build -f Dockerfile.builder --platform linux/arm64 -t streamerbrainz-builder:arm64 --target binaries .
 #
-#   # Extract binaries from image
+#   # Extract binary from image
 #   docker create --name temp streamerbrainz-builder:arm64
 #   docker cp temp:/artifacts/. ./bin/arm64/
 #   docker rm temp
@@ -40,7 +40,7 @@ ARG TARGETVARIANT
 # Display build info
 RUN echo "Building for: ${TARGETOS}/${TARGETARCH}${TARGETVARIANT}"
 
-# Build all binaries with optimizations
+# Build the daemon binary with optimizations
 # CGO_ENABLED=0 ensures fully static binaries (no libc dependency)
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -v -trimpath \
@@ -48,25 +48,13 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     -o /output/streamerbrainz \
     ./cmd/streamerbrainz
 
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -v -trimpath \
-    -ldflags "-s -w -extldflags '-static'" \
-    -o /output/sbctl \
-    ./cmd/sbctl
-
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -v -trimpath \
-    -ldflags "-s -w -extldflags '-static'" \
-    -o /output/ws_listen \
-    ./cmd/ws_listen
-
-# Optional: Compress binaries with UPX (reduces size by ~60%)
+# Optional: Compress binary with UPX (reduces size by ~60%)
 # Comment out if you prefer uncompressed binaries
-RUN upx --best --lzma /output/streamerbrainz /output/sbctl /output/ws_listen || true
+RUN upx --best --lzma /output/streamerbrainz || true
 
-# Verify binaries were built and get file info
+# Verify binary was built and get file info
 RUN ls -lh /output/ && \
-    file /output/* && \
+    file /output/streamerbrainz && \
     /output/streamerbrainz -version || echo "Binary verification completed"
 
 # Stage 2: Export binaries to a clean directory
@@ -100,18 +88,15 @@ COPY --from=builder /output/ /usr/local/bin/
 # Install runtime dependencies for testing
 RUN apk add --no-cache file
 
-# Test binaries
+# Test binary
 RUN echo "=== Binary Information ===" && \
-    file /usr/local/bin/* && \
+    file /usr/local/bin/streamerbrainz && \
     echo "" && \
     echo "=== Size Information ===" && \
-    ls -lh /usr/local/bin/ && \
+    ls -lh /usr/local/bin/streamerbrainz && \
     echo "" && \
     echo "=== Version Check ===" && \
-    /usr/local/bin/streamerbrainz -version && \
-    echo "" && \
-    echo "=== Help Check ===" && \
-    /usr/local/bin/sbctl help
+    /usr/local/bin/streamerbrainz -version
 
 # Default: Use binaries stage for extraction
 FROM binaries

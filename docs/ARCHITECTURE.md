@@ -1,5 +1,60 @@
 # Architecture Documentation
 
+## At a glance
+
+```
+┌─────────────┐
+│ IR (evdev)  │──┐
+└─────────────┘  │
+                 │
+┌──────────────┐ │     ┌─────────────┐     ┌──────────────┐
+│ Integrations │─┼────▶│   Actions   │────▶│  Daemon loop  │
+│ (Spotify/Plex│ │     │   channel   │     │ (single owner)│
+│  hooks)      │─┘     └─────────────┘     └──────┬───────┘
+                                                   │
+                                                   ▼
+                                         ┌─────────────────┐
+                                         │    CamillaDSP     │
+                                         │   (WebSocket)     │
+                                         └─────────────────┘
+```
+
+### Key components
+
+1. **Action-based design**: inputs and integrations translate events into typed actions.
+2. **Single owner daemon loop**: one goroutine owns mutable state and all CamillaDSP I/O.
+3. **Velocity controller**: implements “held / release” behavior as smooth ramping.
+4. **Integration glue**:
+   - **librespot hook** forwards Spotify events into the daemon (internal IPC plumbing).
+   - **Plex webhooks** are received by the daemon’s HTTP server and translated into actions.
+
+---
+
+## Plex integration (implementation notes)
+
+This section describes how the Plex webhook integration is implemented inside the daemon. It is not a user setup guide.
+
+### Data flow
+
+1. Plex Media Server sends a webhook to the daemon (e.g. `http://<host>:<webhooks-port>/webhooks/plex`)
+2. The daemon queries the Plex API `/status/sessions?X-Plex-Token=...` on `-plex-server-url`
+3. The daemon parses the XML response and selects the target player by `-plex-machine-id` (`machineIdentifier`)
+4. The daemon constructs an internal `PlexStateChanged` action with state + track metadata and forwards it into the daemon brain
+
+### Current behavior
+
+- The daemon currently logs Plex events (it does not change CamillaDSP behavior based on Plex playback state yet).
+- The webhooks HTTP server is started regardless of whether Plex integration is enabled; Plex-specific behavior activates only when `-plex-server-url`, `-plex-token-file`, and `-plex-machine-id` are provided.
+
+### Where to look in code
+
+- Flag parsing / enablement logic: `cmd/streamerbrainz/main.go`
+- Webhook server + Plex session fetch/parsing: `cmd/streamerbrainz/plexamp.go`
+- Action type: `cmd/streamerbrainz/actions.go` (`PlexStateChanged`)
+- Handling in the daemon brain: `cmd/streamerbrainz/daemon.go`
+
+---
+
 ## System Overview
 
 ```
