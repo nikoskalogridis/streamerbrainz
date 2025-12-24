@@ -11,7 +11,16 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// CamillaDSPClient provides a high-level API for CamillaDSP WebSocket communication
+// CamillaDSPClientInterface defines the interface for CamillaDSP client operations
+// This allows for mocking in tests
+type CamillaDSPClientInterface interface {
+	SetVolume(targetDB float64) (float64, error)
+	GetVolume() (float64, error)
+	ToggleMute() error
+	Close() error
+}
+
+// CamillaDSPClient manages WebSocket communication with CamillaDSP
 type CamillaDSPClient struct {
 	mu          sync.Mutex
 	conn        *websocket.Conn
@@ -161,13 +170,14 @@ func (c *CamillaDSPClient) sendAndRead(v any, timeout time.Duration) ([]byte, er
 }
 
 // Close closes the WebSocket connection
-func (c *CamillaDSPClient) Close() {
+func (c *CamillaDSPClient) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
 	}
+	return nil
 }
 
 // SetVolume sends a SetVolume command to CamillaDSP and returns the target volume

@@ -58,8 +58,51 @@ func runDaemon(
 
 // handleAction processes an Action and updates internal state
 // This only mutates intent - it does NOT talk to CamillaDSP directly
-func handleAction(act Action, client *CamillaDSPClient, velState *velocityState, logger *slog.Logger) {
+func handleAction(act Action, client CamillaDSPClientInterface, velState *velocityState, logger *slog.Logger) {
 	switch a := act.(type) {
+	case VolumeStep:
+		// Handle rotary encoder steps - bypasses velocity engine entirely
+		dbPerStep := a.DbPerStep
+		if dbPerStep == 0 {
+			dbPerStep = defaultRotaryDbPerStep
+		}
+
+		deltaDB := float64(a.Steps) * dbPerStep
+
+		// Get current volume (from velocity state or server)
+		currentVol := velState.getTarget()
+		if !velState.volumeKnown {
+			// Need to query server first
+			vol, err := client.GetVolume()
+			if err != nil {
+				logger.Error("get volume failed for rotary step", "error", err)
+				return
+			}
+			currentVol = vol
+		}
+
+		newVol := currentVol + deltaDB
+
+		// Clamp to limits (reuse velocity config bounds)
+		if newVol < velState.cfg.MinDB {
+			newVol = velState.cfg.MinDB
+		}
+		if newVol > velState.cfg.MaxDB {
+			newVol = velState.cfg.MaxDB
+		}
+
+		// Apply immediately
+		actualVol, err := client.SetVolume(newVol)
+		if err == nil {
+			velState.updateVolume(actualVol)
+			logger.Debug("volume step applied",
+				"steps", a.Steps,
+				"delta_db", deltaDB,
+				"new_volume", actualVol)
+		} else {
+			logger.Error("volume step failed", "error", err)
+		}
+
 	case VolumeHeld:
 		velState.setHeld(a.Direction)
 
@@ -111,7 +154,7 @@ func handleAction(act Action, client *CamillaDSPClient, velState *velocityState,
 
 // applyVolume is the ONLY place that sends volume changes to CamillaDSP
 // This centralization makes it easy to add policy (fade, mute, etc.)
-func applyVolume(client *CamillaDSPClient, velState *velocityState, logger *slog.Logger) {
+func applyVolume(client CamillaDSPClientInterface, velState *velocityState, logger *slog.Logger) {
 	targetDB := velState.getTarget()
 	currentVol, err := client.SetVolume(targetDB)
 	if err == nil {

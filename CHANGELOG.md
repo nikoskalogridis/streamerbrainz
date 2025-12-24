@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Rotary Encoder Support**: Full support for rotary encoders with step-based volume control
+  - New device type system: `key` (keyboards/IR) vs `rotary` (encoders)
+  - EV_REL event handling (REL_DIAL, REL_WHEEL, REL_MISC)
+  - Intelligent velocity detection for "fast spinning" behavior
+  - Configurable step size, velocity window, multiplier, and threshold
+  - Complete separation from keyboard/IR velocity engine (no interference)
+  - Thread-safe rotary state tracking for concurrent input devices
+- **New Action Type**: `VolumeStep` for discrete encoder steps (bypasses hold/repeat system)
+- **Device Configuration**: New `input_devices` format with explicit device types
+  - Backward compatible: old `devices` array still works (defaults to `type: key`)
+  - Auto-migration in config validation
+- **Comprehensive Testing**: 29 new tests covering rotary state and action handling
+  - Unit tests for velocity detection, window expiry, thread safety
+  - Integration tests for VolumeStep action processing, clamping, defaults
+- **Documentation**: 
+  - User guide: `docs/rotary-encoders.md` with troubleshooting and tuning
+  - Example config: `examples/config-rotary.yaml` with detailed annotations
+  - Implementation summary: `docs/ROTARY_ENCODER_IMPLEMENTATION.md`
+- **Interface Extraction**: `CamillaDSPClientInterface` for improved testability
+
+### Changed
+- Main event loop now routes events by type (EV_KEY vs EV_REL)
+- Device opening tracks device type alongside file handle
+- `handleAction()` and `applyVolume()` now use interface instead of concrete client
+- `Close()` method now returns error for interface consistency
+
+### Technical Details
+
+#### Rotary Encoder Architecture
+- **Separate Code Path**: Rotary encoders bypass the velocity/hold system entirely
+- **Step-Based Control**: Each detent is a discrete `VolumeStep` action
+- **Velocity Detection**: Sliding time window tracks recent steps to detect fast spinning
+  - Slow turn: 1 step/500ms → normal step size (e.g., 0.5 dB)
+  - Fast spin: 5 steps/200ms → velocity mode (e.g., 1.0 dB with 2x multiplier)
+- **Thread Safety**: `rotaryState` uses mutex for concurrent access from multiple devices
+- **No Interference**: Keyboard/IR hold-based control continues working unchanged
+
+#### Configuration Example
+```yaml
+ir:
+  input_devices:
+    - path: /dev/input/event6
+      type: key      # IR remote
+    - path: /dev/input/event7
+      type: rotary   # Rotary encoder
+
+rotary:
+  db_per_step: 0.5
+  velocity_window_ms: 200
+  velocity_multiplier: 2.0
+  velocity_threshold: 3
+```
+
 ## [1.0.0] - 2024-12-22
 
 ### Added

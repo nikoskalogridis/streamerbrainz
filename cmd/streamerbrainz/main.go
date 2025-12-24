@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -134,6 +135,9 @@ func main() {
 	for i := range cfg.IR.Devices {
 		cfg.IR.Devices[i] = ExpandPath(cfg.IR.Devices[i])
 	}
+	for i := range cfg.IR.InputDevices {
+		cfg.IR.InputDevices[i].Path = ExpandPath(cfg.IR.InputDevices[i].Path)
+	}
 	cfg.Plex.TokenFile = ExpandPath(cfg.Plex.TokenFile)
 
 	// Validate fully materialized config
@@ -154,23 +158,33 @@ func main() {
 	plexEnabled := cfg.Plex.Enabled
 
 	// Open all input devices
-	var deviceFiles []*os.File
-	for _, devicePath := range cfg.IR.Devices {
-		f, err := os.Open(devicePath)
+	type openDevice struct {
+		file *os.File
+		typ  InputDeviceType
+		path string
+	}
+	var openDevices []openDevice
+
+	for _, inputDev := range cfg.IR.InputDevices {
+		f, err := os.Open(inputDev.Path)
 		if err != nil {
-			logger.Error("failed to open input device", "device", devicePath, "error", err, "tip", "run as root or add user to 'input' group")
+			logger.Error("failed to open input device", "device", inputDev.Path, "error", err, "tip", "run as root or add user to 'input' group")
 			// Close already opened devices
-			for _, df := range deviceFiles {
-				df.Close()
+			for _, od := range openDevices {
+				od.file.Close()
 			}
 			os.Exit(1)
 		}
-		deviceFiles = append(deviceFiles, f)
-		logger.Debug("opened input device", "device", devicePath)
+		openDevices = append(openDevices, openDevice{
+			file: f,
+			typ:  inputDev.Type,
+			path: inputDev.Path,
+		})
+		logger.Debug("opened input device", "device", inputDev.Path, "type", inputDev.Type)
 	}
 	defer func() {
-		for _, f := range deviceFiles {
-			f.Close()
+		for _, od := range openDevices {
+			od.file.Close()
 		}
 	}()
 
@@ -192,6 +206,9 @@ func main() {
 	// Initialize velocity engine
 	velState := newVelocityState(cfg.ToVelocityConfig())
 	velState.updateVolume(initialVol)
+
+	// Initialize rotary encoder state
+	rotary := newRotaryState()
 
 	// Handle shutdown
 	sigc := make(chan os.Signal, 1)
@@ -226,23 +243,28 @@ func main() {
 	}()
 
 	events := make(chan inputEvent, 64)
-	readErr := make(chan error, len(deviceFiles))
+	readErr := make(chan error, len(openDevices))
 
 	// Start a reader goroutine for each input device
-	for i, f := range deviceFiles {
-		deviceName := cfg.IR.Devices[i]
-		go func(file *os.File, name string) {
-			logger.Debug("starting input reader", "device", name)
+	for _, od := range openDevices {
+		go func(file *os.File, name string, devType InputDeviceType) {
+			logger.Debug("starting input reader", "device", name, "type", devType)
 			readInputEvents(file, events, readErr)
 			logger.Warn("input reader stopped", "device", name)
-		}(f, deviceName)
+		}(od.file, od.path, od.typ)
 	}
 
 	logger.Debug("starting streamerbrainz", "version", version)
 
+	// Build device list for logging
+	var devicePaths []string
+	for _, od := range openDevices {
+		devicePaths = append(devicePaths, od.path)
+	}
+
 	logger.Debug("configuration",
 		"config_path", *configPath,
-		"ir_devices", cfg.IR.Devices,
+		"input_devices", devicePaths,
 		"camilladsp_ws_url", cfg.CamillaDSP.WsURL,
 		"camilladsp_ws_timeout_ms", cfg.CamillaDSP.TimeoutMS,
 		"ipc_socket", cfg.IPC.SocketPath,
@@ -251,6 +273,8 @@ func main() {
 		"camilladsp_update_hz", cfg.CamillaDSP.UpdateHz,
 		"vel_mode", cfg.Velocity.Mode,
 		"vel_max_db_per_sec", cfg.Velocity.MaxDBPerSec,
+		"rotary_db_per_step", cfg.Rotary.DbPerStep,
+		"rotary_velocity_window_ms", cfg.Rotary.VelocityWindowMS,
 		"vel_accel_time_sec", cfg.Velocity.AccelTimeSec,
 		"vel_decay_tau_sec", cfg.Velocity.DecayTauSec,
 		"vel_turbo_mult", cfg.Velocity.TurboMult,
@@ -263,7 +287,7 @@ func main() {
 		"plex_enabled", plexEnabled)
 
 	listenInfo := []any{
-		"ir_devices", cfg.IR.Devices,
+		"input_devices", devicePaths,
 		"ipc", cfg.IPC.SocketPath,
 		"camilladsp_ws", cfg.CamillaDSP.WsURL,
 		"update_rate_hz", cfg.CamillaDSP.UpdateHz,
@@ -294,8 +318,8 @@ func main() {
 		case <-sigc:
 			logger.Info("shutting down")
 			client.Close()
-			for _, f := range deviceFiles {
-				f.Close()
+			for _, od := range openDevices {
+				od.file.Close()
 			}
 			return
 
@@ -308,74 +332,124 @@ func main() {
 			// This allows other devices to keep working
 
 		// --------------------------------------------------------------------
-		// IR input event handling (event translation layer)
+		// Input event handling (event translation layer)
 		// --------------------------------------------------------------------
-		// IR events are translated into Actions and sent to daemon brain
+		// Input events are translated into Actions and sent to daemon brain
 		case ev := <-events:
-			// Filter non-key events
-			if ev.Type != EV_KEY {
+			// Route events based on type
+			switch ev.Type {
+			case EV_KEY:
+				handleKeyEvent(ev, actions, logger)
+
+			case EV_REL:
+				handleRelEvent(ev, actions, rotary, &cfg, logger)
+
+			default:
+				// Ignore other event types
 				continue
 			}
 
-			// Translate IR events into Actions
-			switch ev.Code {
-			case KEY_VOLUMEUP:
-				if ev.Value == evValuePress || ev.Value == evValueRepeat {
-					actions <- VolumeHeld{Direction: 1}
-				} else if ev.Value == evValueRelease {
-					actions <- VolumeRelease{}
-				}
-
-			case KEY_VOLUMEDOWN:
-				if ev.Value == evValuePress || ev.Value == evValueRepeat {
-					actions <- VolumeHeld{Direction: -1}
-				} else if ev.Value == evValueRelease {
-					actions <- VolumeRelease{}
-				}
-
-			case KEY_MUTE:
-				if ev.Value == evValuePress {
-					actions <- ToggleMute{}
-				}
-
-			// Media control keys
-			case KEY_PLAYPAUSE:
-				if ev.Value == evValuePress {
-					logger.Debug("media key", "key", "play/pause")
-					// TODO: Add PlayPause action if needed
-				}
-
-			case KEY_NEXTSONG:
-				if ev.Value == evValuePress {
-					logger.Debug("media key", "key", "next")
-					// TODO: Add Next action if needed
-				}
-
-			case KEY_PREVIOUSSONG:
-				if ev.Value == evValuePress {
-					logger.Debug("media key", "key", "previous")
-					// TODO: Add Previous action if needed
-				}
-
-			case KEY_PLAYCD:
-				if ev.Value == evValuePress {
-					logger.Debug("media key", "key", "play")
-					// TODO: Add Play action if needed
-				}
-
-			case KEY_PAUSECD:
-				if ev.Value == evValuePress {
-					logger.Debug("media key", "key", "pause")
-					// TODO: Add Pause action if needed
-				}
-
-			case KEY_STOPCD:
-				if ev.Value == evValuePress {
-					logger.Debug("media key", "key", "stop")
-					// TODO: Add Stop action if needed
-				}
-			}
 		}
+	}
+}
+
+// handleKeyEvent processes EV_KEY events (keyboards, IR remotes)
+func handleKeyEvent(ev inputEvent, actions chan<- Action, logger *slog.Logger) {
+	// Translate key events into Actions
+	switch ev.Code {
+	case KEY_VOLUMEUP:
+		if ev.Value == evValuePress || ev.Value == evValueRepeat {
+			actions <- VolumeHeld{Direction: 1}
+		} else if ev.Value == evValueRelease {
+			actions <- VolumeRelease{}
+		}
+
+	case KEY_VOLUMEDOWN:
+		if ev.Value == evValuePress || ev.Value == evValueRepeat {
+			actions <- VolumeHeld{Direction: -1}
+		} else if ev.Value == evValueRelease {
+			actions <- VolumeRelease{}
+		}
+
+	case KEY_MUTE:
+		if ev.Value == evValuePress {
+			actions <- ToggleMute{}
+		}
+
+	// Media control keys
+	case KEY_PLAYPAUSE:
+		if ev.Value == evValuePress {
+			logger.Debug("media key", "key", "play/pause")
+			// TODO: Add PlayPause action if needed
+		}
+
+	case KEY_NEXTSONG:
+		if ev.Value == evValuePress {
+			logger.Debug("media key", "key", "next")
+			// TODO: Add Next action if needed
+		}
+
+	case KEY_PREVIOUSSONG:
+		if ev.Value == evValuePress {
+			logger.Debug("media key", "key", "previous")
+			// TODO: Add Previous action if needed
+		}
+
+	case KEY_PLAYCD:
+		if ev.Value == evValuePress {
+			logger.Debug("media key", "key", "play")
+			// TODO: Add Play action if needed
+		}
+
+	case KEY_PAUSECD:
+		if ev.Value == evValuePress {
+			logger.Debug("media key", "key", "pause")
+			// TODO: Add Pause action if needed
+		}
+
+	case KEY_STOPCD:
+		if ev.Value == evValuePress {
+			logger.Debug("media key", "key", "stop")
+			// TODO: Add Stop action if needed
+		}
+	}
+}
+
+// handleRelEvent processes EV_REL events (rotary encoders)
+func handleRelEvent(ev inputEvent, actions chan<- Action, rotary *rotaryState, cfg *Config, logger *slog.Logger) {
+	// Only handle rotary encoder codes
+	if ev.Code != REL_DIAL && ev.Code != REL_WHEEL && ev.Code != REL_MISC {
+		return
+	}
+
+	if ev.Value == 0 {
+		return // No movement
+	}
+
+	// Determine direction
+	direction := 1
+	if ev.Value < 0 {
+		direction = -1
+	}
+
+	// Track velocity: count recent steps in same direction
+	recentCount := rotary.addStep(direction, cfg.Rotary.VelocityWindowMS)
+
+	// Calculate step size with optional velocity multiplier
+	dbPerStep := cfg.Rotary.DbPerStep
+
+	if recentCount >= cfg.Rotary.VelocityThreshold {
+		dbPerStep *= cfg.Rotary.VelocityMultiplier
+		logger.Debug("rotary velocity mode",
+			"steps_in_window", recentCount,
+			"multiplier", cfg.Rotary.VelocityMultiplier,
+			"db_per_step", dbPerStep)
+	}
+
+	// Send VolumeStep action (preserves sign from ev.Value)
+	actions <- VolumeStep{
+		Steps:     int(ev.Value),
+		DbPerStep: dbPerStep,
 	}
 }
 

@@ -23,6 +23,13 @@ type VolumeHeld struct {
 // VolumeRelease indicates all volume buttons have been released
 type VolumeRelease struct{}
 
+// VolumeStep represents discrete volume adjustments from rotary encoders
+// This bypasses the velocity/hold system for clean step-based control
+type VolumeStep struct {
+	Steps     int     `json:"steps"`                 // Number of detents/steps (positive=up, negative=down)
+	DbPerStep float64 `json:"db_per_step,omitempty"` // Optional: override default step size
+}
+
 // ToggleMute requests mute state to be toggled
 type ToggleMute struct{}
 
@@ -117,6 +124,13 @@ func UnmarshalAction(data []byte) (Action, error) {
 	case "volume_release":
 		return VolumeRelease{}, nil
 
+	case "volume_step":
+		var a VolumeStep
+		if err := json.Unmarshal(env.Data, &a); err != nil {
+			return nil, fmt.Errorf("unmarshal VolumeStep: %w", err)
+		}
+		return a, nil
+
 	case "toggle_mute":
 		return ToggleMute{}, nil
 
@@ -189,6 +203,14 @@ func MarshalAction(action Action) ([]byte, error) {
 
 	case VolumeRelease:
 		env.Type = "volume_release"
+
+	case VolumeStep:
+		env.Type = "volume_step"
+		data, err := json.Marshal(a)
+		if err != nil {
+			return nil, fmt.Errorf("marshal VolumeStep: %w", err)
+		}
+		env.Data = data
 
 	case ToggleMute:
 		env.Type = "toggle_mute"

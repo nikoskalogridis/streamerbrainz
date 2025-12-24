@@ -39,13 +39,31 @@ type Config struct {
 	// Plex integration
 	Plex PlexConfig `yaml:"plex"`
 
+	// Rotary encoder configuration
+	Rotary RotaryConfig `yaml:"rotary"`
+
 	// Logging
 	Logging LoggingConfig `yaml:"logging"`
 }
 
+// InputDeviceType describes how to interpret events from an input device
+type InputDeviceType string
+
+const (
+	InputDeviceTypeKey    InputDeviceType = "key"    // EV_KEY events (IR remotes, keyboards)
+	InputDeviceTypeRotary InputDeviceType = "rotary" // EV_REL events (rotary encoders)
+)
+
+// InputDevice describes a single input device with its path and type
+type InputDevice struct {
+	Path string          `yaml:"path"` // Device path (e.g., /dev/input/event6)
+	Type InputDeviceType `yaml:"type"` // Device type: "key" or "rotary"
+}
+
 type IRConfig struct {
-	Device  string   `yaml:"device,omitempty"`  // Deprecated: use Devices instead
-	Devices []string `yaml:"devices,omitempty"` // List of input devices to monitor
+	Device       string        `yaml:"device,omitempty"`        // Deprecated: use Devices instead
+	Devices      []string      `yaml:"devices,omitempty"`       // Deprecated: use InputDevices instead
+	InputDevices []InputDevice `yaml:"input_devices,omitempty"` // List of input devices with types
 }
 
 type CamillaDSPConfig struct {
@@ -108,12 +126,23 @@ type VelocityFileConfig struct {
 	DangerVelMinNear0DBPerS float64 `yaml:"danger_vel_min_near0_db_per_sec"`
 }
 
+// RotaryConfig contains rotary encoder-specific configuration
+type RotaryConfig struct {
+	DbPerStep          float64 `yaml:"db_per_step"`         // dB change per encoder step
+	VelocityWindowMS   int     `yaml:"velocity_window_ms"`  // Time window for velocity detection (ms)
+	VelocityMultiplier float64 `yaml:"velocity_multiplier"` // Multiplier for "fast spinning"
+	VelocityThreshold  int     `yaml:"velocity_threshold"`  // Steps in window to trigger velocity mode
+}
+
 // DefaultConfig returns a fully-populated Config with defaults.
 // Keep this aligned with constants.go defaults and current CLI defaults.
 func DefaultConfig() Config {
 	return Config{
 		IR: IRConfig{
 			Devices: []string{"/dev/input/event6"},
+			InputDevices: []InputDevice{
+				{Path: "/dev/input/event6", Type: InputDeviceTypeKey},
+			},
 		},
 		CamillaDSP: CamillaDSPConfig{
 			WsURL:     "ws://127.0.0.1:1234",
@@ -145,6 +174,12 @@ func DefaultConfig() Config {
 			ServerURL: "",
 			TokenFile: "",
 			MachineID: "",
+		},
+		Rotary: RotaryConfig{
+			DbPerStep:          defaultRotaryDbPerStep,
+			VelocityWindowMS:   defaultRotaryVelocityWindowMS,
+			VelocityMultiplier: defaultRotaryVelocityMultiplier,
+			VelocityThreshold:  defaultRotaryVelocityThreshold,
 		},
 		Logging: LoggingConfig{
 			Level: "info",
@@ -315,18 +350,40 @@ func (o FlagOverrides) Apply(cfg *Config) {
 // Validate checks config invariants and returns a user-friendly error.
 // This is intended to be called after defaults + file + overrides are applied.
 func (c *Config) Validate() error {
-	// IR - support both old single device and new multiple devices
-	// Migrate old config format to new format if needed
-	if c.IR.Device != "" && len(c.IR.Devices) == 0 {
-		c.IR.Devices = []string{c.IR.Device}
+	// IR - support old formats and migrate to new InputDevices format
+	// Priority: input_devices > devices > device
+	if len(c.IR.InputDevices) == 0 {
+		// Migrate from old formats
+		if len(c.IR.Devices) > 0 {
+			// Migrate from devices array (assume all are key-type)
+			for _, path := range c.IR.Devices {
+				c.IR.InputDevices = append(c.IR.InputDevices, InputDevice{
+					Path: path,
+					Type: InputDeviceTypeKey,
+				})
+			}
+		} else if c.IR.Device != "" {
+			// Migrate from single device (assume key-type)
+			c.IR.InputDevices = []InputDevice{
+				{Path: c.IR.Device, Type: InputDeviceTypeKey},
+			}
+		}
 	}
-	if len(c.IR.Devices) == 0 {
-		return errors.New("ir.devices must not be empty (or use deprecated ir.device)")
+
+	if len(c.IR.InputDevices) == 0 {
+		return errors.New("ir.input_devices must not be empty (or use deprecated ir.devices/ir.device)")
 	}
-	// Validate all device paths are non-empty
-	for i, dev := range c.IR.Devices {
-		if dev == "" {
-			return fmt.Errorf("ir.devices[%d] is empty", i)
+
+	// Validate all input devices
+	for i, dev := range c.IR.InputDevices {
+		if dev.Path == "" {
+			return fmt.Errorf("ir.input_devices[%d].path is empty", i)
+		}
+		if dev.Type == "" {
+			return fmt.Errorf("ir.input_devices[%d].type is empty", i)
+		}
+		if dev.Type != InputDeviceTypeKey && dev.Type != InputDeviceTypeRotary {
+			return fmt.Errorf("ir.input_devices[%d].type must be %q or %q", i, InputDeviceTypeKey, InputDeviceTypeRotary)
 		}
 	}
 
@@ -382,6 +439,20 @@ func (c *Config) Validate() error {
 		if c.Plex.MachineID == "" {
 			return errors.New("plex.enabled is true but plex.machine_id is empty")
 		}
+	}
+
+	// Rotary encoder
+	if c.Rotary.DbPerStep < 0 {
+		return errors.New("rotary.db_per_step must be >= 0")
+	}
+	if c.Rotary.VelocityWindowMS < 0 {
+		return errors.New("rotary.velocity_window_ms must be >= 0")
+	}
+	if c.Rotary.VelocityMultiplier < 1 {
+		return errors.New("rotary.velocity_multiplier must be >= 1")
+	}
+	if c.Rotary.VelocityThreshold < 1 {
+		return errors.New("rotary.velocity_threshold must be >= 1")
 	}
 
 	// Logging

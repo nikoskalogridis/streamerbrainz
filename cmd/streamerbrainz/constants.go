@@ -3,6 +3,7 @@ package main
 // Linux input event types and codes (from <linux/input.h>)
 const (
 	EV_KEY = 0x01
+	EV_REL = 0x02
 
 	KEY_MUTE         = 113
 	KEY_VOLUMEDOWN   = 114
@@ -13,6 +14,11 @@ const (
 	KEY_NEXTSONG     = 163
 	KEY_PLAYCD       = 200
 	KEY_PAUSECD      = 201
+
+	// Rotary encoder relative axis codes
+	REL_DIAL  = 0x07
+	REL_WHEEL = 0x08
+	REL_MISC  = 0x09
 )
 
 // Input event value constants
@@ -46,4 +52,10 @@ const (
 
 	// Volume update threshold
 	volumeUpdateThresholdDB = 0.02 // Minimum volume difference to send update (dB)
+
+	// Rotary encoder configuration defaults
+	defaultRotaryDbPerStep          = 0.5 // Default dB change per encoder step
+	defaultRotaryVelocityWindowMS   = 200 // Time window for velocity detection (ms)
+	defaultRotaryVelocityMultiplier = 2.0 // Multiplier for "fast spinning"
+	defaultRotaryVelocityThreshold  = 3   // Steps in window to trigger velocity mode
 )
