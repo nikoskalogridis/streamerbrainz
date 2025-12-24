@@ -17,7 +17,10 @@
 # Or use the provided build-binaries.sh script for easier extraction
 
 # Stage 1: Builder
-FROM golang:1.24.6-alpine AS builder
+# NOTE: We run the builder stage on the build machine's platform so cross-compiles
+# (e.g. linux/arm64 on an amd64 host) are fast and do not require QEMU for the
+# compilation steps themselves. The target binary is still selected via GOOS/GOARCH.
+FROM --platform=$BUILDPLATFORM golang:1.24.6-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git make upx file
@@ -49,8 +52,13 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     ./cmd/streamerbrainz
 
 # Optional: Compress binary with UPX (reduces size by ~60%)
-# Comment out if you prefer uncompressed binaries
-RUN upx --best --lzma /output/streamerbrainz || true
+# Set `NO_UPX=1` to disable compression (useful to speed up builds)
+ARG NO_UPX=0
+RUN if [ "${NO_UPX}" = "1" ]; then \
+        echo "Skipping UPX compression (NO_UPX=1)"; \
+    else \
+        upx --best --lzma /output/streamerbrainz || true; \
+    fi
 
 # Verify binary was built and get file info
 RUN ls -lh /output/ && \
@@ -58,7 +66,11 @@ RUN ls -lh /output/ && \
     /output/streamerbrainz -version || echo "Binary verification completed"
 
 # Stage 2: Export binaries to a clean directory
-FROM alpine:latest AS binaries
+# NOTE: During a cross-platform build (e.g. building linux/arm64 on an amd64 host),
+# any `RUN` instruction in an arm64 stage would require QEMU/binfmt emulation.
+# This stage only packages already-built artifacts, so we force it to run on the
+# build machine's platform to avoid "exec format error".
+FROM --platform=$BUILDPLATFORM alpine:latest AS binaries
 
 # Build arguments
 ARG TARGETOS=linux
@@ -80,6 +92,9 @@ LABEL platform="${TARGETOS}/${TARGETARCH}"
 CMD ["ls", "-lh", "/artifacts/"]
 
 # Stage 3: Verification stage (optional, for testing)
+# This stage executes the produced binary, so it must run on the *target* platform.
+# If you are cross-building (e.g. arm64 on amd64), you need QEMU/binfmt enabled for
+# `--platform` execution, otherwise this stage will fail.
 FROM alpine:latest AS verify
 
 # Copy binaries

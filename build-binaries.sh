@@ -8,7 +8,7 @@
 #   ./build-binaries.sh                    # Build for all architectures
 #   ./build-binaries.sh --amd64            # Build for amd64 only
 #   ./build-binaries.sh --arm64            # Build for arm64 only (Raspberry Pi 4+)
-#   ./build-binaries.sh --armv7            # Build for armv7 (Raspberry Pi 3)
+#   ./build-binaries.sh --upx              # Build with UPX compression (opt-in)
 #   ./build-binaries.sh --clean            # Clean all built binaries
 #   ./build-binaries.sh --help             # Show help
 
@@ -67,9 +67,7 @@ OPTIONS:
     --all           Build for all supported architectures (default)
     --amd64         Build for amd64 (x86_64) only
     --arm64         Build for arm64 (Raspberry Pi 4+) only
-    --armv7         Build for armv7 (Raspberry Pi 3) only
-    --armv6         Build for armv6 (Raspberry Pi 1/Zero) only
-    --no-upx        Build without UPX compression
+    --upx           Build with UPX compression
     --verify        Verify binaries after building
     --clean         Clean all built binaries
     --help          Show this help message
@@ -82,20 +80,19 @@ OUTPUT:
     │   └── streamerbrainz
     ├── arm64/
     │   └── streamerbrainz
-    └── armv7/
-        └── streamerbrainz
+
 
 EXAMPLES:
-    # Build for all architectures
+    # Build for all architectures (amd64 + arm64)
     $0
 
-    # Build only for Raspberry Pi 4
+    # Build only for arm64 (Raspberry Pi 4+)
     $0 --arm64
 
-    # Build for x86_64 without compression
-    $0 --amd64 --no-upx
+    # Build for x86_64 with UPX compression (opt-in)
+    $0 --amd64 --upx
 
-    # Build and verify all binaries
+    # Build and verify all binaries (UPX off by default)
     $0 --all --verify
 
     # Clean built binaries
@@ -149,6 +146,7 @@ build_platform() {
         --target binaries \
         -f "${DOCKER_FILE}" \
         -t "${image_tag}" \
+        --build-arg NO_UPX="${NO_UPX}" \
         --load \
         . || {
             print_error "Build failed for ${platform}"
@@ -224,7 +222,7 @@ clean_binaries() {
 
     if [ -d "${OUTPUT_DIR}" ]; then
         print_info "Removing ${OUTPUT_DIR}/*"
-        rm -rf "${OUTPUT_DIR}"/amd64 "${OUTPUT_DIR}"/arm64 "${OUTPUT_DIR}"/armv7 "${OUTPUT_DIR}"/armv6
+        rm -rf "${OUTPUT_DIR}"/amd64 "${OUTPUT_DIR}"/arm64
         print_success "Binaries cleaned"
     else
         print_info "No binaries to clean"
@@ -245,6 +243,7 @@ main() {
     local build_armv6=false
     local do_verify=false
     local do_clean=false
+    local use_upx=false
 
     # Parse arguments
     if [ $# -eq 0 ]; then
@@ -265,12 +264,9 @@ main() {
                 build_arm64=true
                 shift
                 ;;
-            --armv7)
-                build_armv7=true
-                shift
-                ;;
-            --armv6)
-                build_armv6=true
+
+            --upx)
+                use_upx=true
                 shift
                 ;;
             --verify)
@@ -307,12 +303,18 @@ main() {
     if [ "$build_all" = true ]; then
         build_amd64=true
         build_arm64=true
-        build_armv7=true
     fi
 
     print_header "StreamerBrainz Binary Builder"
     print_info "Version: ${VERSION}"
     print_info "Output directory: ${OUTPUT_DIR}"
+    if [ "$use_upx" = true ]; then
+        export NO_UPX=0
+        print_info "UPX: enabled"
+    else
+        export NO_UPX=1
+        print_info "UPX: disabled (default, NO_UPX=1)"
+    fi
     echo ""
 
     # Build for each requested platform
@@ -320,7 +322,7 @@ main() {
 
     if [ "$build_amd64" = true ]; then
         build_platform "linux/amd64" "amd64"
-        ((build_count++))
+        ((++build_count))
 
         if [ "$do_verify" = true ]; then
             verify_binaries "amd64" "linux/amd64"
@@ -329,30 +331,14 @@ main() {
 
     if [ "$build_arm64" = true ]; then
         build_platform "linux/arm64" "arm64"
-        ((build_count++))
+        ((++build_count))
 
         if [ "$do_verify" = true ]; then
             verify_binaries "arm64" "linux/arm64"
         fi
     fi
 
-    if [ "$build_armv7" = true ]; then
-        build_platform "linux/arm/v7" "armv7"
-        ((build_count++))
 
-        if [ "$do_verify" = true ]; then
-            verify_binaries "armv7" "linux/arm/v7"
-        fi
-    fi
-
-    if [ "$build_armv6" = true ]; then
-        build_platform "linux/arm/v6" "armv6"
-        ((build_count++))
-
-        if [ "$do_verify" = true ]; then
-            verify_binaries "armv6" "linux/arm/v6"
-        fi
-    fi
 
     # Summary
     print_header "Build Summary"
