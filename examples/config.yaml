@@ -1,11 +1,6 @@
-ir:
-  input_devices:
-    - path: /dev/input/by-id/usb-FLIRC.tv_flirc-event-kbd
-      type: key
-    # - path: /dev/input/by-id/usb-Logitech_USB_Keyboard-event-kbd
-    #   type: key
-    # - path: /dev/input/by-id/usb-Griffin_PowerMate-event-if00
-    #   type: rotary
+inputs:
+  - path: /dev/input/by-id/usb-FLIRC.tv_flirc-event-kbd
+    type: key # key | rotary
 
 camilladsp:
   ws_url: ws://127.0.0.1:1234

@@ -50,7 +50,7 @@ func printUsage() {
 	fmt.Println("SUBCOMMANDS:")
 	fmt.Println("  librespot-hook")
 	fmt.Println("        Run as librespot event hook (reads PLAYER_EVENT from environment)")
-	fmt.Println("        Options: -ipc-socket, -log-level")
+	fmt.Println("        Options: -config, -log-level")
 	fmt.Println()
 	fmt.Println("EXAMPLES:")
 	fmt.Println("  # Print a default config template")
@@ -86,8 +86,8 @@ func main() {
 
 	// Parse command-line flags (config-first, minimal overrides)
 	var (
-		configPath         = flag.String("config", "", "Path to JSON config file")
-		printDefaultConfig = flag.Bool("print-default-config", false, "Print default JSON config and exit")
+		configPath         = flag.String("config", "", "Path to YAML config file")
+		printDefaultConfig = flag.Bool("print-default-config", false, "Print default YAML config and exit")
 		logLevelOverride   = flag.String("log-level", "", "Override logging.level from config (error, warn, info, debug)")
 		showVersion        = flag.Bool("version", false, "Print version and exit")
 		showHelp           = flag.Bool("help", false, "Print help message")
@@ -131,8 +131,8 @@ func main() {
 
 	// Expand user paths
 	cfg.IPC.SocketPath = ExpandPath(cfg.IPC.SocketPath)
-	for i := range cfg.IR.InputDevices {
-		cfg.IR.InputDevices[i].Path = ExpandPath(cfg.IR.InputDevices[i].Path)
+	for i := range cfg.Inputs {
+		cfg.Inputs[i].Path = ExpandPath(cfg.Inputs[i].Path)
 	}
 	cfg.Plex.TokenFile = ExpandPath(cfg.Plex.TokenFile)
 
@@ -161,7 +161,7 @@ func main() {
 	}
 	var openDevices []openDevice
 
-	for _, inputDev := range cfg.IR.InputDevices {
+	for _, inputDev := range cfg.Inputs {
 		f, err := os.Open(inputDev.Path)
 		if err != nil {
 			logger.Error("failed to open input device", "device", inputDev.Path, "error", err, "tip", "run as root or add user to 'input' group")
@@ -457,22 +457,23 @@ func printLibrespotHookUsage() {
 	fmt.Println()
 	fmt.Println("DESCRIPTION:")
 	fmt.Println("  Librespot event hook that communicates with the StreamerBrainz")
-	fmt.Println("  daemon via Unix socket. Reads PLAYER_EVENT environment variable to")
-	fmt.Println("  handle playback events (start/stop/playing/paused/changed).")
+	fmt.Println("  daemon via Unix socket configured in the YAML config file.")
+	fmt.Println("  Reads PLAYER_EVENT environment variable to handle playback events")
+	fmt.Println("  (start|stop|playing|paused|changed).")
 	fmt.Println()
 	fmt.Println("OPTIONS:")
-	fmt.Println("  -ipc-socket string")
-	fmt.Println("        Unix domain socket path for IPC (default \"/tmp/streamerbrainz.sock\")")
+	fmt.Println("  -config string")
+	fmt.Printf("        Path to YAML config file (default %q)\n", defaultConfigPath)
 	fmt.Println()
 	fmt.Println("  -log-level string")
-	fmt.Println("        Log level: error, warn, info, debug (default \"info\")")
+	fmt.Println("        Override logging.level from config (error, warn, info, debug)")
 	fmt.Println()
 	fmt.Println("ENVIRONMENT VARIABLES:")
 	fmt.Println("  PLAYER_EVENT - Event type from librespot (start|stop|playing|paused|changed)")
 	fmt.Println()
 	fmt.Println("EXAMPLE:")
 	fmt.Println("  Add to librespot configuration:")
-	fmt.Println("  onevent = /usr/local/bin/streamerbrainz librespot-hook")
+	fmt.Println("  onevent = /usr/local/bin/streamerbrainz librespot-hook -config ~/.config/streamerbrainz/config.yaml")
 	fmt.Println()
 }
 
@@ -480,8 +481,8 @@ func printLibrespotHookUsage() {
 func runLibrespotSubcommand() {
 	// Create a new flagset for librespot subcommand
 	fs := flag.NewFlagSet("librespot-hook", flag.ExitOnError)
-	ipcSocketPath := fs.String("ipc-socket", "/tmp/streamerbrainz.sock", "Unix domain socket path for IPC")
-	logLevelStr := fs.String("log-level", "info", "Log level: error, warn, info, debug")
+	configPath := fs.String("config", "", "Path to YAML config file")
+	logLevelOverride := fs.String("log-level", "", "Override logging.level from config (error, warn, info, debug)")
 	showHelp := fs.Bool("help", false, "Print help message")
 
 	// Custom usage for librespot subcommand
@@ -496,8 +497,32 @@ func runLibrespotSubcommand() {
 		return
 	}
 
+	if *configPath == "" {
+		*configPath = defaultConfigPath
+	}
+
+	cfg, err := LoadConfigFile(*configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	// Apply small overrides
+	if *logLevelOverride != "" {
+		cfg.Logging.Level = *logLevelOverride
+	}
+
+	// Expand user paths (only what librespot-hook uses)
+	cfg.IPC.SocketPath = ExpandPath(cfg.IPC.SocketPath)
+
+	// Validate fully materialized config
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintln(os.Stderr, "error: invalid config:", err)
+		os.Exit(1)
+	}
+
 	// Parse and validate log level
-	logLevel, err := parseLogLevel(*logLevelStr)
+	logLevel, err := parseLogLevel(cfg.Logging.Level)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -507,7 +532,7 @@ func runLibrespotSubcommand() {
 	logger := setupLogger(logLevel)
 
 	// Run hook handler (reads from environment variables)
-	if err := runLibrespotHook(*ipcSocketPath, logger); err != nil {
+	if err := runLibrespotHook(cfg.IPC.SocketPath, logger); err != nil {
 		logger.Error("librespot hook error", "error", err)
 		os.Exit(1)
 	}

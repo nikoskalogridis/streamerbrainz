@@ -21,8 +21,8 @@ import (
 // - Keep flags for small overrides and for environments where a file is awkward.
 // - Preserve current defaults for existing users where practical.
 type Config struct {
-	// IR input configuration
-	IR IRConfig `yaml:"ir"`
+	// Inputs configuration (generic input devices, e.g. keyboards, IR remotes, rotary encoders)
+	Inputs []InputDevice `yaml:"inputs"`
 
 	// CamillaDSP control configuration
 	CamillaDSP CamillaDSPConfig `yaml:"camilladsp"`
@@ -58,10 +58,6 @@ const (
 type InputDevice struct {
 	Path string          `yaml:"path"` // Device path (e.g., /dev/input/event6)
 	Type InputDeviceType `yaml:"type"` // Device type: "key" or "rotary"
-}
-
-type IRConfig struct {
-	InputDevices []InputDevice `yaml:"input_devices,omitempty"` // List of input devices with types
 }
 
 type CamillaDSPConfig struct {
@@ -136,10 +132,8 @@ type RotaryConfig struct {
 // Keep this aligned with constants.go defaults and current CLI defaults.
 func DefaultConfig() Config {
 	return Config{
-		IR: IRConfig{
-			InputDevices: []InputDevice{
-				{Path: "/dev/input/event6", Type: InputDeviceTypeKey},
-			},
+		Inputs: []InputDevice{
+			{Path: "/dev/input/event6", Type: InputDeviceTypeKey},
 		},
 		CamillaDSP: CamillaDSPConfig{
 			WsURL:     "ws://127.0.0.1:1234",
@@ -217,157 +211,24 @@ func LoadConfigFile(path string) (Config, error) {
 	return cfg, nil
 }
 
-// ApplyFlagOverrides applies overrides from flags on top of a loaded config.
-//
-// This is designed so you can keep a config file as the primary configuration source,
-// but still do ad-hoc overrides for debugging/systemd overrides.
-//
-// Flags should pass pointers; each override is only applied if "set" is true.
-//
-// NOTE: This file only defines the mechanism; main.go should decide what flags exist.
-// Keeping the override mechanism separate makes it easy to evolve flags without
-// proliferating conditionals all over the code.
-type FlagOverrides struct {
-	IRDevice *string
-
-	CamillaWsURL     *string
-	CamillaTimeoutMS *int
-	CamillaMinDB     *float64
-	CamillaMaxDB     *float64
-	CamillaUpdateHz  *int
-
-	VelMode         *string
-	VelMaxDBPerSec  *float64
-	VelAccelTimeSec *float64
-	VelDecayTauSec  *float64
-	VelTurboMult    *float64
-	VelTurboDelay   *float64
-
-	VelHoldTimeoutMS           *int
-	VelDangerZoneDB            *float64
-	VelDangerVelMaxDBPerSec    *float64
-	VelDangerVelMinNear0DBPerS *float64
-
-	IPCSocketPath *string
-	WebhooksPort  *int
-
-	PlexEnabled   *bool
-	PlexServerURL *string
-	PlexTokenFile *string
-	PlexMachineID *string
-
-	LogLevel *string
-}
-
-// Apply merges the overrides into cfg. If an override pointer is nil, it is ignored.
-// If the pointer is non-nil, the value is applied (even if it is a “zero value”).
-func (o FlagOverrides) Apply(cfg *Config) {
-	if cfg == nil {
-		return
-	}
-	if o.IRDevice != nil {
-		// Set the first (and typically only) input device path.
-		if len(cfg.IR.InputDevices) == 0 {
-			cfg.IR.InputDevices = []InputDevice{{Path: *o.IRDevice, Type: InputDeviceTypeKey}}
-		} else {
-			cfg.IR.InputDevices[0].Path = *o.IRDevice
-			if cfg.IR.InputDevices[0].Type == "" {
-				cfg.IR.InputDevices[0].Type = InputDeviceTypeKey
-			}
-		}
-	}
-
-	if o.CamillaWsURL != nil {
-		cfg.CamillaDSP.WsURL = *o.CamillaWsURL
-	}
-	if o.CamillaTimeoutMS != nil {
-		cfg.CamillaDSP.TimeoutMS = *o.CamillaTimeoutMS
-	}
-	if o.CamillaMinDB != nil {
-		cfg.CamillaDSP.MinDB = *o.CamillaMinDB
-	}
-	if o.CamillaMaxDB != nil {
-		cfg.CamillaDSP.MaxDB = *o.CamillaMaxDB
-	}
-	if o.CamillaUpdateHz != nil {
-		cfg.CamillaDSP.UpdateHz = *o.CamillaUpdateHz
-	}
-
-	if o.VelMode != nil {
-		cfg.Velocity.Mode = *o.VelMode
-	}
-	if o.VelMaxDBPerSec != nil {
-		cfg.Velocity.MaxDBPerSec = *o.VelMaxDBPerSec
-	}
-	if o.VelAccelTimeSec != nil {
-		cfg.Velocity.AccelTimeSec = *o.VelAccelTimeSec
-	}
-	if o.VelDecayTauSec != nil {
-		cfg.Velocity.DecayTauSec = *o.VelDecayTauSec
-	}
-	if o.VelTurboMult != nil {
-		cfg.Velocity.TurboMult = *o.VelTurboMult
-	}
-	if o.VelTurboDelay != nil {
-		cfg.Velocity.TurboDelay = *o.VelTurboDelay
-	}
-
-	if o.VelHoldTimeoutMS != nil {
-		cfg.Velocity.HoldTimeoutMS = *o.VelHoldTimeoutMS
-	}
-	if o.VelDangerZoneDB != nil {
-		cfg.Velocity.DangerZoneDB = *o.VelDangerZoneDB
-	}
-	if o.VelDangerVelMaxDBPerSec != nil {
-		cfg.Velocity.DangerVelMaxDBPerSec = *o.VelDangerVelMaxDBPerSec
-	}
-	if o.VelDangerVelMinNear0DBPerS != nil {
-		cfg.Velocity.DangerVelMinNear0DBPerS = *o.VelDangerVelMinNear0DBPerS
-	}
-
-	if o.IPCSocketPath != nil {
-		cfg.IPC.SocketPath = *o.IPCSocketPath
-	}
-	if o.WebhooksPort != nil {
-		cfg.Webhooks.Port = *o.WebhooksPort
-	}
-
-	if o.PlexEnabled != nil {
-		cfg.Plex.Enabled = *o.PlexEnabled
-	}
-	if o.PlexServerURL != nil {
-		cfg.Plex.ServerURL = *o.PlexServerURL
-	}
-	if o.PlexTokenFile != nil {
-		cfg.Plex.TokenFile = *o.PlexTokenFile
-	}
-	if o.PlexMachineID != nil {
-		cfg.Plex.MachineID = *o.PlexMachineID
-	}
-
-	if o.LogLevel != nil {
-		cfg.Logging.Level = *o.LogLevel
-	}
-}
-
 // Validate checks config invariants and returns a user-friendly error.
 // This is intended to be called after defaults + file + overrides are applied.
 func (c *Config) Validate() error {
-	// IR
-	if len(c.IR.InputDevices) == 0 {
-		return errors.New("ir.input_devices must not be empty")
+	// Inputs
+	if len(c.Inputs) == 0 {
+		return errors.New("inputs must not be empty")
 	}
 
 	// Validate all input devices
-	for i, dev := range c.IR.InputDevices {
+	for i, dev := range c.Inputs {
 		if dev.Path == "" {
-			return fmt.Errorf("ir.input_devices[%d].path is empty", i)
+			return fmt.Errorf("inputs[%d].path is empty", i)
 		}
 		if dev.Type == "" {
-			return fmt.Errorf("ir.input_devices[%d].type is empty", i)
+			return fmt.Errorf("inputs[%d].type is empty", i)
 		}
 		if dev.Type != InputDeviceTypeKey && dev.Type != InputDeviceTypeRotary {
-			return fmt.Errorf("ir.input_devices[%d].type must be %q or %q", i, InputDeviceTypeKey, InputDeviceTypeRotary)
+			return fmt.Errorf("inputs[%d].type must be %q or %q", i, InputDeviceTypeKey, InputDeviceTypeRotary)
 		}
 	}
 
