@@ -74,12 +74,12 @@ The goal is: the user running StreamerBrainz must be able to open the device fil
 ## Troubleshooting
 
 ### "failed to open input device"
-This means StreamerBrainz could not open the device specified in `ir.device`.
+This means StreamerBrainz could not open a device specified in `ir.input_devices`.
 
 Checklist:
 1. Verify the device exists:
    - `ls -l /dev/input/event*`
-2. Verify `ir.device` in your config points to the correct device.
+2. Verify `ir.input_devices[].path` in your config points to the correct device(s).
 3. Check permissions:
    - `ls -l /dev/input/eventX`
 4. If running under systemd, confirm the service user matches the permissions you set.
@@ -118,6 +118,6 @@ This usually isn't an IR issue. It's typically velocity tuning / update rate tun
 
 ## Notes
 
-- StreamerBrainz reads from exactly one `ir.device` path.
+- StreamerBrainz reads from one or more `ir.input_devices[].path` entries.
 - For a fully-documented configuration example, see: `examples/config.yaml`
 - For configuration reference, run: `streamerbrainz -help`

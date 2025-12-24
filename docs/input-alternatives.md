@@ -275,7 +275,7 @@ If you want to use the more efficient epoll-based approach:
    ```go
    // OLD: Multiple goroutines
    for i, f := range deviceFiles {
-       deviceName := cfg.IR.Devices[i]
+       deviceName := cfg.IR.InputDevices[i].Path
        go func(file *os.File, name string) {
            readInputEvents(file, events, readErr)
        }(f, deviceName)

@@ -61,8 +61,6 @@ type InputDevice struct {
 }
 
 type IRConfig struct {
-	Device       string        `yaml:"device,omitempty"`        // Deprecated: use Devices instead
-	Devices      []string      `yaml:"devices,omitempty"`       // Deprecated: use InputDevices instead
 	InputDevices []InputDevice `yaml:"input_devices,omitempty"` // List of input devices with types
 }
 
@@ -139,7 +137,6 @@ type RotaryConfig struct {
 func DefaultConfig() Config {
 	return Config{
 		IR: IRConfig{
-			Devices: []string{"/dev/input/event6"},
 			InputDevices: []InputDevice{
 				{Path: "/dev/input/event6", Type: InputDeviceTypeKey},
 			},
@@ -269,9 +266,15 @@ func (o FlagOverrides) Apply(cfg *Config) {
 		return
 	}
 	if o.IRDevice != nil {
-		// For backward compatibility, setting IRDevice flag sets both old and new fields
-		cfg.IR.Device = *o.IRDevice
-		cfg.IR.Devices = []string{*o.IRDevice}
+		// Set the first (and typically only) input device path.
+		if len(cfg.IR.InputDevices) == 0 {
+			cfg.IR.InputDevices = []InputDevice{{Path: *o.IRDevice, Type: InputDeviceTypeKey}}
+		} else {
+			cfg.IR.InputDevices[0].Path = *o.IRDevice
+			if cfg.IR.InputDevices[0].Type == "" {
+				cfg.IR.InputDevices[0].Type = InputDeviceTypeKey
+			}
+		}
 	}
 
 	if o.CamillaWsURL != nil {
@@ -350,28 +353,9 @@ func (o FlagOverrides) Apply(cfg *Config) {
 // Validate checks config invariants and returns a user-friendly error.
 // This is intended to be called after defaults + file + overrides are applied.
 func (c *Config) Validate() error {
-	// IR - support old formats and migrate to new InputDevices format
-	// Priority: input_devices > devices > device
+	// IR
 	if len(c.IR.InputDevices) == 0 {
-		// Migrate from old formats
-		if len(c.IR.Devices) > 0 {
-			// Migrate from devices array (assume all are key-type)
-			for _, path := range c.IR.Devices {
-				c.IR.InputDevices = append(c.IR.InputDevices, InputDevice{
-					Path: path,
-					Type: InputDeviceTypeKey,
-				})
-			}
-		} else if c.IR.Device != "" {
-			// Migrate from single device (assume key-type)
-			c.IR.InputDevices = []InputDevice{
-				{Path: c.IR.Device, Type: InputDeviceTypeKey},
-			}
-		}
-	}
-
-	if len(c.IR.InputDevices) == 0 {
-		return errors.New("ir.input_devices must not be empty (or use deprecated ir.devices/ir.device)")
+		return errors.New("ir.input_devices must not be empty")
 	}
 
 	// Validate all input devices

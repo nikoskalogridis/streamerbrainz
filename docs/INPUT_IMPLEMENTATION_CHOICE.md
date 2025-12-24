@@ -273,7 +273,7 @@ If you want the more efficient approach:
 ```go
 // Start a reader goroutine for each input device
 for i, f := range deviceFiles {
-    deviceName := cfg.IR.Devices[i]
+    deviceName := cfg.IR.InputDevices[i].Path
     go func(file *os.File, name string) {
         logger.Debug("starting input reader", "device", name)
         readInputEvents(file, events, readErr)

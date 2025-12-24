@@ -131,10 +131,6 @@ func main() {
 
 	// Expand user paths
 	cfg.IPC.SocketPath = ExpandPath(cfg.IPC.SocketPath)
-	cfg.IR.Device = ExpandPath(cfg.IR.Device)
-	for i := range cfg.IR.Devices {
-		cfg.IR.Devices[i] = ExpandPath(cfg.IR.Devices[i])
-	}
 	for i := range cfg.IR.InputDevices {
 		cfg.IR.InputDevices[i].Path = ExpandPath(cfg.IR.InputDevices[i].Path)
 	}
