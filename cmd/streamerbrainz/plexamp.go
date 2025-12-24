@@ -126,58 +126,58 @@ func handlePlexWebhook(config PlexampConfig, actions chan<- Action, logger *slog
 	return func(w http.ResponseWriter, r *http.Request) {
 		logger.Debug("received Plex webhook", "method", r.Method, "path", r.URL.Path)
 
-		// Fetch current sessions from Plex
-		container, err := fetchPlexSessions(config, logger)
-		if err != nil {
-			logger.Error("failed to fetch Plex sessions", "error", err)
-			http.Error(w, "Failed to fetch sessions", http.StatusInternalServerError)
-			return
-		}
-
-		logger.Debug("fetched Plex sessions", "count", container.Size)
-
-		// Find track for our machine identifier
-		track := findTrackByMachineIdentifier(container, config.MachineIdentifier)
-		if track == nil {
-			logger.Debug("no track found for machine identifier", "machine_id", config.MachineIdentifier)
-			// This is not an error - the webhook might be for a different player
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("OK - no matching player"))
-			return
-		}
-
-		logger.Info("Plex session found",
-			"title", track.Title,
-			"artist", track.GrandparentTitle,
-			"album", track.ParentTitle,
-			"state", track.Player.State,
-			"position_ms", track.ViewOffset,
-			"duration_ms", track.Duration)
-
-		// Create action from track info
-		action := PlexStateChanged{
-			State:         track.Player.State,
-			Title:         track.Title,
-			Artist:        track.GrandparentTitle,
-			Album:         track.ParentTitle,
-			DurationMs:    track.Duration,
-			PositionMs:    track.ViewOffset,
-			SessionKey:    track.SessionKey,
-			RatingKey:     track.RatingKey,
-			PlayerTitle:   track.Player.Title,
-			PlayerProduct: track.Player.Product,
-		}
-
-		// Send action to daemon
-		select {
-		case actions <- action:
-			logger.Debug("Plex action sent", "state", track.Player.State)
-		default:
-			logger.Warn("action queue full, dropping Plex event")
-		}
-
+		// Respond immediately: the webhook delivery has succeeded once we accept it.
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+
+		// Process session lookup asynchronously.
+		go func() {
+			// Fetch current sessions from Plex
+			container, err := fetchPlexSessions(config, logger)
+			if err != nil {
+				logger.Error("failed to fetch Plex sessions", "error", err)
+				return
+			}
+
+			logger.Debug("fetched Plex sessions", "count", container.Size)
+
+			// Find track for our machine identifier
+			track := findTrackByMachineIdentifier(container, config.MachineIdentifier)
+			if track == nil {
+				logger.Debug("no track found for machine identifier", "machine_id", config.MachineIdentifier)
+				// Not an error: the webhook might be for a different player.
+				return
+			}
+
+			logger.Info("Plex session found",
+				"title", track.Title,
+				"artist", track.GrandparentTitle,
+				"album", track.ParentTitle,
+				"state", track.Player.State,
+				"position_ms", track.ViewOffset,
+				"duration_ms", track.Duration)
+
+			// Create action from track info
+			action := PlexStateChanged{
+				State:         track.Player.State,
+				Title:         track.Title,
+				Artist:        track.GrandparentTitle,
+				Album:         track.ParentTitle,
+				DurationMs:    track.Duration,
+				PositionMs:    track.ViewOffset,
+				SessionKey:    track.SessionKey,
+				RatingKey:     track.RatingKey,
+				PlayerTitle:   track.Player.Title,
+				PlayerProduct: track.Player.Product,
+			}
+
+			// Send action to daemon
+			select {
+			case actions <- action:
+				logger.Debug("Plex action sent", "state", track.Player.State)
+			default:
+				logger.Warn("action queue full, dropping Plex event")
+			}
+		}()
 	}
 }
 
