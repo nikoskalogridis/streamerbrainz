@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -196,13 +197,13 @@ func Reduce(s *DaemonState, e Event, cfg VelocityConfig) ReduceResult {
 		// Integrate controller if held; if not held, still allow timeout logic to run
 		// (StepVolumeController includes hold-timeout handling).
 		if s.VolumeCtrl.HeldDirection != 0 {
-			nextCtrl, nextTarget := StepVolumeController(s.VolumeCtrl, baseline, ev.Dt, ev.Now, cfg)
+			nextCtrl := StepVolumeController(s.VolumeCtrl, baseline, ev.Dt, ev.Now, cfg)
 			s.VolumeCtrl = nextCtrl
-			s.SetDesiredVolume(nextTarget)
+			s.SetDesiredVolume(nextCtrl.TargetDB)
 		} else {
 			// Still step to apply hold-timeout logic and decay behavior while not held.
 			// This keeps VelocityDBPerS decaying in accelerating mode if desired.
-			nextCtrl, _ := StepVolumeController(s.VolumeCtrl, baseline, ev.Dt, ev.Now, cfg)
+			nextCtrl := StepVolumeController(s.VolumeCtrl, baseline, ev.Dt, ev.Now, cfg)
 			s.VolumeCtrl = nextCtrl
 		}
 
@@ -219,7 +220,14 @@ func Reduce(s *DaemonState, e Event, cfg VelocityConfig) ReduceResult {
 		if s.Intent.DesiredVolumeDB != nil {
 			v := *s.Intent.DesiredVolumeDB
 			s.Intent.DesiredVolumeDB = nil
-			cmds = append(cmds, CmdSetVolume{TargetDB: v})
+
+			// Policy: avoid unnecessary SetVolume commands when we're already close to observed state.
+			// Observed state is authoritative (CamillaDSP), so we threshold against it when known.
+			//
+			// If volume is not known, emit the command so we converge quickly.
+			if !s.Camilla.VolumeKnown || math.Abs(v-s.Camilla.VolumeDB) >= volumeUpdateThresholdDB {
+				cmds = append(cmds, CmdSetVolume{TargetDB: v})
+			}
 		}
 
 	case ActionEvent:

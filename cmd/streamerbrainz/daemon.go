@@ -44,7 +44,8 @@ func runDaemon(
 ) {
 	// Guard: reducer-driven daemon expects a state container.
 	if state == nil {
-		state = &DaemonState{}
+		logger.Error("daemon state is nil")
+		return
 	}
 
 	// Configure tick cadence.

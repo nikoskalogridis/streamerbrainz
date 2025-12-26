@@ -7,23 +7,15 @@ import (
 
 // VelocityMode selects how "press-and-hold" behaves.
 //
-// The goal is to allow a simpler constant-rate mode (with optional turbo)
-// while reusing the existing knobs:
-// - vel-max-db-per-sec
-// - vel-accel-time
-// - vel-decay-tau
-//
-// Interpretation:
-//
 // Accelerating mode (default):
-// - vel-max-db-per-sec: maximum velocity
-// - vel-accel-time: time to reach max velocity
-// - vel-decay-tau: exponential decay time constant when released
+//   - VelMaxDBPerS: maximum velocity (dB/s)
+//   - AccelTime: time to reach max velocity (s)
+//   - DecayTau: exponential decay time constant when released (s)
 //
 // Constant mode:
-// - vel-max-db-per-sec: base (normal) hold rate in dB/s
-// - vel-accel-time: turbo multiplier (if > 1). turboRate = baseRate * vel-accel-time
-// - vel-decay-tau: turbo activation delay in seconds (if > 0). after holding for this long, turbo engages
+//   - VelMaxDBPerS: base hold rate (dB/s)
+//   - AccelTime: turbo multiplier (unitless, >1 enables turbo)
+//   - DecayTau: turbo activation delay (s), 0 disables delay
 type VelocityMode string
 
 const (
@@ -31,7 +23,7 @@ const (
 	VelocityModeConstant     VelocityMode = "constant"
 )
 
-// VelocityConfig contains all tunable parameters for the velocity engine.
+// VelocityConfig contains all tunable parameters for the volume controller.
 type VelocityConfig struct {
 	// Mode
 	Mode VelocityMode
@@ -46,333 +38,48 @@ type VelocityConfig struct {
 	MaxDB float64
 
 	// Robustness
-	HoldTimeout time.Duration // Auto-release if no hold events arrive in this duration
-	MaxDt       float64       // Max dt allowed per update step (seconds). 0 disables clamping.
+	// HoldTimeout auto-releases if no hold events arrive in this duration. 0 disables timeout.
+	HoldTimeout time.Duration
+	// MaxDt clamps very large dt steps (seconds). 0 disables clamping.
+	MaxDt float64
 
 	// Danger zone (near max volume), ramp-up only
 	DangerZoneDB            float64 // Size of danger zone below MaxDB (dB)
 	DangerVelMaxDBPerS      float64 // Hard cap for ramp-up velocity inside danger zone (dB/s)
-	DangerVelMinNear0DBPerS float64 // Minimum ramp-up velocity near MaxDB (dB/s), avoids "sticky" top
+	DangerVelMinNear0DBPerS float64 // Minimum ramp-up velocity near MaxDB (dB/s)
 }
 
-// velocityState manages smooth velocity-based volume control.
-type velocityState struct {
-	// Dynamics
-	targetDB       float64 // Target volume in dB
-	velocityDBPerS float64 // Current velocity in dB/s (signed). Used in accelerating mode.
-
-	// Hold tracking
-	heldDirection int // -1 for down, 0 for none, 1 for up
-	lastHeldAt    time.Time
-
-	// Turbo tracking (constant mode)
-	holdBeganAt time.Time // first time we observed a hold for the current hold gesture
-
-	// Server state
-	currentVolume float64 // Last known actual volume from server
-	volumeKnown   bool    // Whether we have a valid volume reading
-
-	// Configuration
-	cfg          VelocityConfig
-	accelDBPerS2 float64 // Acceleration in dB/s² (accelerating mode only)
-}
-
-// newVelocityState creates a new velocity state with the given configuration.
-func newVelocityState(cfg VelocityConfig) *velocityState {
-	// Fill defaults.
-	if cfg.Mode == "" {
-		cfg.Mode = VelocityModeAccelerating
-	}
-
-	// Fill robustness defaults if caller leaves them empty.
-	if cfg.HoldTimeout == 0 {
-		// Many remotes repeat at ~100-200ms; 600ms avoids premature release while still being safe.
-		cfg.HoldTimeout = 600 * time.Millisecond
-	}
-	if cfg.MaxDt == 0 {
-		cfg.MaxDt = 0.5
-	}
-	if cfg.DangerZoneDB == 0 {
-		cfg.DangerZoneDB = dangerZoneDB
-	}
-	if cfg.DangerVelMaxDBPerS == 0 {
-		cfg.DangerVelMaxDBPerS = dangerVelMaxDBPerS
-	}
-	if cfg.DangerVelMinNear0DBPerS == 0 {
-		cfg.DangerVelMinNear0DBPerS = dangerVelMinNear0DBPerS
-	}
-
-	// Precompute acceleration from VelMax / AccelTime (accelerating mode only).
-	accelDBPerS2 := 0.0
-	if cfg.Mode == VelocityModeAccelerating && cfg.AccelTime > 0 {
-		accelDBPerS2 = cfg.VelMaxDBPerS / cfg.AccelTime
-	}
-
-	return &velocityState{
-		cfg:          cfg,
-		accelDBPerS2: accelDBPerS2,
-		lastHeldAt:   time.Now(),
-	}
-}
-
-// setHeld sets the direction the volume button is being held.
+// StepVolumeController advances the reducer-owned volume controller state by one tick.
 //
-// This is intended to be called only by the daemon goroutine (single-owner).
-func (v *velocityState) setHeld(direction int) {
-	now := time.Now()
-
-	// Track the start of a "hold gesture" for constant+turbo mode.
-	// We define a new gesture as:
-	// - transitioning from not-held to held, or
-	// - changing direction while held
-	if v.heldDirection == 0 || (direction != 0 && direction != v.heldDirection) {
-		v.holdBeganAt = now
-	}
-
-	v.heldDirection = direction
-	v.lastHeldAt = now
-}
-
-// release releases all volume buttons.
-//
-// This is intended to be called only by the daemon goroutine (single-owner).
-func (v *velocityState) release() {
-	v.heldDirection = 0
-	// Reset hold gesture so the next hold starts fresh.
-	v.holdBeganAt = time.Time{}
-}
-
-// stopMoving cancels any in-progress motion immediately without claiming the server volume changed.
-//
-// Use this when an external action (e.g. rotary step, absolute set) should override and stop
-// hold/velocity-based movement.
-//
-// This is intended to be called only by the daemon goroutine (single-owner).
-func (v *velocityState) stopMoving() {
-	v.release()
-	v.velocityDBPerS = 0
-	// Ensure turbo/gesture tracking restarts cleanly on the next hold.
-	v.holdBeganAt = time.Time{}
-}
-
-// updateVolume synchronizes the internal state with the server's actual volume.
-//
-// This is intended to be called only by the daemon goroutine (single-owner).
-func (v *velocityState) updateVolume(currentVol float64) {
-	v.currentVolume = currentVol
-	v.volumeKnown = true
-	v.targetDB = currentVol // Sync target with actual
-}
-
-// updateWithDt advances the velocity and target based on elapsed time.
-//
-// This is intended to be called only by the daemon goroutine (single-owner).
-func (v *velocityState) updateWithDt(dt float64, now time.Time) {
-	// Defensive dt handling:
-	// - ignore non-positive dt
-	// - clamp very large dt (startup or stalls) to avoid huge jumps while still making progress
-	if dt <= 0 {
-		return
-	}
-	if v.cfg.MaxDt > 0 && dt > v.cfg.MaxDt {
-		dt = v.cfg.MaxDt
-	}
-
-	// Hold-timeout: if we haven't observed a hold event recently, treat as released.
-	// This protects against missing release events or integrations that only emit repeats sporadically.
-	if v.heldDirection != 0 && v.cfg.HoldTimeout > 0 && !v.lastHeldAt.IsZero() {
-		if now.Sub(v.lastHeldAt) > v.cfg.HoldTimeout {
-			v.heldDirection = 0
-			v.holdBeganAt = time.Time{}
-		}
-	}
-
-	// Base "rate limit" (velMax) for this tick.
-	//
-	// Goals:
-	// - Ramping UP should slow down near max volume (danger zone).
-	// - Ramping DOWN should behave like the rest of the band (no danger-zone slowdown).
-	velMax := v.cfg.VelMaxDBPerS
-
-	if v.heldDirection == 1 {
-		// For safety, engage the danger-zone based on where we're headed, not only what the server last reported.
-		// Use a simple, conservative estimate:
-		//   estVol = max(currentVolume, targetDB) when volumeKnown
-		//   estVol = targetDB otherwise
-		estVol := v.targetDB
-		if v.volumeKnown && v.currentVolume > estVol {
-			estVol = v.currentVolume
-		}
-
-		// Danger zone threshold is defined relative to max volume (MaxDB).
-		// Enter danger zone when estVol > (MaxDB - DangerZoneDB).
-		dangerThreshold := v.cfg.MaxDB - v.cfg.DangerZoneDB
-
-		// Map estVol from [dangerThreshold..MaxDB] into x in [0..1]
-		if estVol > dangerThreshold {
-			den := (v.cfg.MaxDB - dangerThreshold)
-			x := 1.0
-			if den > 0 {
-				x = (estVol - dangerThreshold) / den
-			}
-			if x < 0 {
-				x = 0
-			}
-			if x > 1 {
-				x = 1
-			}
-
-			// Hard cap immediately upon entering the danger zone, then apply extra caution near max:
-			// extraReduction(x) = 1 - x^3  (1 at zone entry, 0 at MaxDB)
-			extra := 1.0 - (x * x * x)
-			if extra < 0 {
-				extra = 0
-			}
-			if extra > 1 {
-				extra = 1
-			}
-
-			// velMax transitions from DangerVelMaxDBPerS at zone entry down to
-			// DangerVelMinNear0DBPerS near MaxDB.
-			velMax = v.cfg.DangerVelMinNear0DBPerS + (v.cfg.DangerVelMaxDBPerS-v.cfg.DangerVelMinNear0DBPerS)*extra
-		}
-	}
-
-	switch v.cfg.Mode {
-	case VelocityModeConstant:
-		// Constant-rate hold:
-		// - base rate: VelMaxDBPerS
-		// - optional turbo:
-		//    turbo multiplier: AccelTime (if > 1)
-		//    turbo delay: DecayTau (seconds, if > 0)
-		rate := 0.0
-		if v.heldDirection == 1 {
-			rate = v.cfg.VelMaxDBPerS
-		} else if v.heldDirection == -1 {
-			rate = -v.cfg.VelMaxDBPerS
-		} else {
-			rate = 0
-		}
-
-		// Turbo only applies while held.
-		if v.heldDirection != 0 {
-			mult := v.cfg.AccelTime
-			if mult < 1 {
-				mult = 1
-			}
-
-			delay := v.cfg.DecayTau
-			if delay < 0 {
-				delay = 0
-			}
-
-			if mult > 1 && delay > 0 && !v.holdBeganAt.IsZero() && now.Sub(v.holdBeganAt) >= time.Duration(delay*float64(time.Second)) {
-				rate *= mult
-			} else if mult > 1 && delay == 0 {
-				// If delay is 0, turbo is immediate.
-				rate *= mult
-			}
-		}
-
-		// Apply the per-tick velMax cap (danger zone applies to UP only by how velMax was computed above).
-		if rate > 0 && rate > velMax {
-			rate = velMax
-		}
-		if rate < 0 && -rate > velMax {
-			rate = -velMax
-		}
-
-		v.targetDB += rate * dt
-
-	default:
-		// Accelerating mode (existing behavior).
-		// Snappier direction changes: if the held direction reverses, reset velocity so it responds immediately.
-		if (v.heldDirection == 1 && v.velocityDBPerS < 0) || (v.heldDirection == -1 && v.velocityDBPerS > 0) {
-			v.velocityDBPerS = 0
-		}
-
-		// Update velocity based on held state
-		if v.heldDirection == 1 { // UP held
-			v.velocityDBPerS += v.accelDBPerS2 * dt
-			if v.velocityDBPerS > velMax {
-				v.velocityDBPerS = velMax
-			}
-		} else if v.heldDirection == -1 { // DOWN held
-			v.velocityDBPerS -= v.accelDBPerS2 * dt
-			if v.velocityDBPerS < -velMax {
-				v.velocityDBPerS = -velMax
-			}
-		} else { // Not held - apply exponential decay for tick-rate-independent behavior
-			if v.cfg.DecayTau <= 0 {
-				v.velocityDBPerS = 0
-			} else {
-				decay := math.Exp(-dt / v.cfg.DecayTau)
-				v.velocityDBPerS *= decay
-			}
-		}
-
-		// Update target position
-		v.targetDB += v.velocityDBPerS * dt
-	}
-
-	// Clamp target to limits
-	if v.targetDB < v.cfg.MinDB {
-		v.targetDB = v.cfg.MinDB
-		v.velocityDBPerS = 0
-	}
-	if v.targetDB > v.cfg.MaxDB {
-		v.targetDB = v.cfg.MaxDB
-		v.velocityDBPerS = 0
-	}
-}
-
-// setUpdateHz configures the engine's max dt clamp relative to the daemon update rate.
-// This should be called once during initialization.
-//
-// This is intended to be called only by the daemon goroutine (single-owner).
-func (v *velocityState) setUpdateHz(updateHz int) {
-	if updateHz <= 0 {
-		return
-	}
-	// Allow up to ~2 ticks worth of time to be integrated in one step.
-	v.cfg.MaxDt = 2.0 / float64(updateHz)
-}
-
-// getTarget returns the current target volume.
-//
-// This is intended to be called only by the daemon goroutine (single-owner).
-func (v *velocityState) getTarget() float64 {
-	return v.targetDB
-}
-
-// StepVolumeController advances the volume controller state by one tick and returns the next state.
-//
-// This is a PURE function with respect to controller ownership:
-//   - It does not mutate external state
-//   - It does not perform I/O
-//
-// It is designed for the reducer pattern (Option A), where the controller state lives inside DaemonState.
+// IMPORTANT (Option A):
+// - This function is pure w.r.t. ownership: it does not mutate any external state.
+// - Observed volume/mute/config are NOT responsibilities of the controller. Those live in DaemonState.Camilla.
+// - Whether to send volume updates (thresholding, rate limiting) is a reducer/policy responsibility.
 //
 // Parameters:
 //   - ctrl: current controller state (held direction, velocity, gesture timing, target)
-//   - baselineTarget: the target position to integrate from for this tick (typically daemon-owned desired volume
-//     if present, else the last observed CamillaDSP volume)
+//   - baselineTarget: the target position to integrate from for this tick (typically daemon desired if present,
+//     else the last observed CamillaDSP volume, else ctrl.TargetDB)
 //   - dt/now: timing inputs for integration
 //   - cfg: velocity configuration (bounds, dynamics)
 //
-// Returns:
-//   - next controller state
-//   - next desired target (same as next.TargetDB, returned for convenience)
-func StepVolumeController(ctrl VolumeControllerState, baselineTarget float64, dt float64, now time.Time, cfg VelocityConfig) (VolumeControllerState, float64) {
-	// Apply dt rules consistent with velocityState.updateWithDt
+// StepVolumeController advances the reducer-owned volume controller state by one tick.
+//
+// IMPORTANT (Option A):
+// - This function is pure w.r.t. ownership: it does not mutate any external state.
+// - Observed volume/mute/config are NOT responsibilities of the controller. Those live in DaemonState.Camilla.
+// - Whether to send volume updates (thresholding, rate limiting) is a reducer/policy responsibility.
+func StepVolumeController(ctrl VolumeControllerState, baselineTarget float64, dt float64, now time.Time, cfg VelocityConfig) VolumeControllerState {
+	// Defensive dt handling
 	if dt <= 0 {
-		return ctrl, ctrl.TargetDB
+		return ctrl
 	}
 	if cfg.MaxDt > 0 && dt > cfg.MaxDt {
 		dt = cfg.MaxDt
 	}
 
-	// Hold-timeout behavior (mirrors velocityState.updateWithDt)
+	// Hold-timeout behavior: if we haven't observed a hold event recently, treat as released.
+	// This is a robustness fallback for inputs that emit repeats but may miss releases.
 	if ctrl.HeldDirection != 0 && cfg.HoldTimeout > 0 && !ctrl.LastHeldAt.IsZero() {
 		if now.Sub(ctrl.LastHeldAt) > cfg.HoldTimeout {
 			ctrl.HeldDirection = 0
@@ -380,16 +87,16 @@ func StepVolumeController(ctrl VolumeControllerState, baselineTarget float64, dt
 		}
 	}
 
-	// Use the provided baseline target as the position for this integration step.
+	// Integrate from daemon-provided baseline.
 	ctrl.TargetDB = baselineTarget
 
 	// Compute per-tick velMax with danger-zone behavior for ramp-up (UP only).
 	velMax := cfg.VelMaxDBPerS
-	if ctrl.HeldDirection == 1 {
+	if ctrl.HeldDirection == 1 && cfg.DangerZoneDB > 0 {
 		estVol := ctrl.TargetDB
 		dangerThreshold := cfg.MaxDB - cfg.DangerZoneDB
 		if estVol > dangerThreshold {
-			den := (cfg.MaxDB - dangerThreshold)
+			den := cfg.MaxDB - dangerThreshold
 			x := 1.0
 			if den > 0 {
 				x = (estVol - dangerThreshold) / den
@@ -407,6 +114,7 @@ func StepVolumeController(ctrl VolumeControllerState, baselineTarget float64, dt
 			if extra > 1 {
 				extra = 1
 			}
+			// velMax transitions from DangerVelMaxDBPerS at zone entry down to DangerVelMinNear0DBPerS near MaxDB.
 			velMax = cfg.DangerVelMinNear0DBPerS + (cfg.DangerVelMaxDBPerS-cfg.DangerVelMinNear0DBPerS)*extra
 		}
 	}
@@ -421,6 +129,7 @@ func StepVolumeController(ctrl VolumeControllerState, baselineTarget float64, dt
 			rate = -cfg.VelMaxDBPerS
 		}
 
+		// Turbo only applies while held.
 		if ctrl.HeldDirection != 0 {
 			mult := cfg.AccelTime
 			if mult < 1 {
@@ -430,6 +139,7 @@ func StepVolumeController(ctrl VolumeControllerState, baselineTarget float64, dt
 			if delay < 0 {
 				delay = 0
 			}
+
 			if mult > 1 && delay > 0 && !ctrl.HoldBeganAt.IsZero() && now.Sub(ctrl.HoldBeganAt) >= time.Duration(delay*float64(time.Second)) {
 				rate *= mult
 			} else if mult > 1 && delay == 0 {
@@ -437,6 +147,7 @@ func StepVolumeController(ctrl VolumeControllerState, baselineTarget float64, dt
 			}
 		}
 
+		// Apply per-tick velMax cap (danger zone affects UP only by how velMax was computed).
 		if rate > 0 && rate > velMax {
 			rate = velMax
 		}
@@ -448,17 +159,18 @@ func StepVolumeController(ctrl VolumeControllerState, baselineTarget float64, dt
 
 	default:
 		// Accelerating mode.
-		// Precompute accel from VelMax / AccelTime (same semantics as newVelocityState()).
+		// accel = VelMax / AccelTime
 		accel := 0.0
 		if cfg.AccelTime > 0 {
 			accel = cfg.VelMaxDBPerS / cfg.AccelTime
 		}
 
-		// Snappier direction changes
+		// Snappier direction changes: if the held direction reverses, reset velocity so it responds immediately.
 		if (ctrl.HeldDirection == 1 && ctrl.VelocityDBPerS < 0) || (ctrl.HeldDirection == -1 && ctrl.VelocityDBPerS > 0) {
 			ctrl.VelocityDBPerS = 0
 		}
 
+		// Update velocity based on held state
 		if ctrl.HeldDirection == 1 {
 			ctrl.VelocityDBPerS += accel * dt
 			if ctrl.VelocityDBPerS > velMax {
@@ -470,6 +182,7 @@ func StepVolumeController(ctrl VolumeControllerState, baselineTarget float64, dt
 				ctrl.VelocityDBPerS = -velMax
 			}
 		} else {
+			// Not held: apply exponential decay for tick-rate-independent behavior.
 			if cfg.DecayTau <= 0 {
 				ctrl.VelocityDBPerS = 0
 			} else {
@@ -478,6 +191,7 @@ func StepVolumeController(ctrl VolumeControllerState, baselineTarget float64, dt
 			}
 		}
 
+		// Update target position
 		ctrl.TargetDB += ctrl.VelocityDBPerS * dt
 	}
 
@@ -491,18 +205,5 @@ func StepVolumeController(ctrl VolumeControllerState, baselineTarget float64, dt
 		ctrl.VelocityDBPerS = 0
 	}
 
-	return ctrl, ctrl.TargetDB
-}
-
-// shouldSendUpdate returns true if we should send an update to CamillaDSP.
-//
-// This is intended to be called only by the daemon goroutine (single-owner).
-func (v *velocityState) shouldSendUpdate() bool {
-	if !v.volumeKnown {
-		return false
-	}
-
-	// Send if target differs from current by more than threshold
-	diff := v.targetDB - v.currentVolume
-	return diff > volumeUpdateThresholdDB || diff < -volumeUpdateThresholdDB
+	return ctrl
 }
