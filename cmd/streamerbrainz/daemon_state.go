@@ -5,7 +5,7 @@ import "time"
 // DaemonState is the top-level, daemon-owned state container.
 //
 // Goals:
-//   - Separate "program state" from controller-specific state (e.g. velocity engine).
+//   - Keep all reducer-owned state in one place (pure reducer, no external mutation).
 //   - Provide a single place to store observed state (what CamillaDSP reported)
 //     and intent (what we want to apply).
 //   - Make it easy to publish a coherent snapshot to other clients (IPC/UI/etc).
@@ -17,9 +17,39 @@ type DaemonState struct {
 	// We cache what we last observed from CamillaDSP so we can expose it to other clients.
 	Camilla CamillaDSPState
 
+	// VolumeCtrl is the reducer-owned volume controller state (velocity/hold dynamics).
+	// This embeds what used to be mutated inside velocityState so the reducer can be pure.
+	VolumeCtrl VolumeControllerState
+
 	// Intent contains desired changes that should be applied by the daemon's
-	// centralized effects stage. These are not side effects themselves.
+	// centralized effects stage (the only place that should talk to CamillaDSP).
 	Intent DaemonIntent
+}
+
+// VolumeControllerState is the reducer-owned state for the velocity/hold volume controller.
+//
+// This is NOT CamillaDSP state. It represents "how the controller should behave over time"
+// (held direction, velocity, gesture timing). The reducer updates this state, and the daemon
+// loop applies the resulting desired volume to CamillaDSP via commands.
+//
+// Keeping this inside DaemonState (Option A) allows the reducer to remain pure:
+// it returns a new DaemonState without mutating external controller objects.
+type VolumeControllerState struct {
+	// TargetDB is the controller's current desired target position (in dB).
+	// This is a controller state variable used for integration; it is not the authoritative
+	// observed volume (which lives in CamillaDSPState.VolumeDB).
+	TargetDB float64
+
+	// VelocityDBPerS is the current velocity in dB/s (signed).
+	// Used in accelerating mode; in constant mode it may remain 0.
+	VelocityDBPerS float64
+
+	// HeldDirection: -1 for down, 0 for none, 1 for up
+	HeldDirection int
+
+	// Timing for hold gestures and safety timeouts
+	LastHeldAt  time.Time
+	HoldBeganAt time.Time
 }
 
 // CamillaDSPState is the daemon's cached view of CamillaDSP.

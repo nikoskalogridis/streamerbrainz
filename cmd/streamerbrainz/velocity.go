@@ -345,41 +345,153 @@ func (v *velocityState) getTarget() float64 {
 	return v.targetDB
 }
 
-// computeNextTargetWithDt advances the velocity engine for one step and returns the
-// resulting desired target volume, without committing it to v.targetDB.
+// StepVolumeController advances the volume controller state by one tick and returns the next state.
 //
-// This enables the daemon to own "desired volume" in a separate state container
-// (e.g. DaemonState), while still reusing the velocity engine dynamics.
+// This is a PURE function with respect to controller ownership:
+//   - It does not mutate external state
+//   - It does not perform I/O
+//
+// It is designed for the reducer pattern (Option A), where the controller state lives inside DaemonState.
 //
 // Parameters:
-//   - baselineTarget: the starting target to integrate from (daemon-owned desired volume)
-//   - dt/now: timing inputs (same as updateWithDt)
+//   - ctrl: current controller state (held direction, velocity, gesture timing, target)
+//   - baselineTarget: the target position to integrate from for this tick (typically daemon-owned desired volume
+//     if present, else the last observed CamillaDSP volume)
+//   - dt/now: timing inputs for integration
+//   - cfg: velocity configuration (bounds, dynamics)
 //
-// This is intended to be called only by the daemon goroutine (single-owner).
-func (v *velocityState) computeNextTargetWithDt(baselineTarget float64, dt float64, now time.Time) float64 {
-	// Save fields that updateWithDt mutates. Note that updateWithDt may also mutate
-	// heldDirection/holdBeganAt/lastHeldAt via timeout handling, so we preserve those too.
-	savedTarget := v.targetDB
-	savedVelocity := v.velocityDBPerS
-	savedHeld := v.heldDirection
-	savedLastHeldAt := v.lastHeldAt
-	savedHoldBeganAt := v.holdBeganAt
+// Returns:
+//   - next controller state
+//   - next desired target (same as next.TargetDB, returned for convenience)
+func StepVolumeController(ctrl VolumeControllerState, baselineTarget float64, dt float64, now time.Time, cfg VelocityConfig) (VolumeControllerState, float64) {
+	// Apply dt rules consistent with velocityState.updateWithDt
+	if dt <= 0 {
+		return ctrl, ctrl.TargetDB
+	}
+	if cfg.MaxDt > 0 && dt > cfg.MaxDt {
+		dt = cfg.MaxDt
+	}
 
-	// Integrate using the provided baseline as the current target.
-	v.targetDB = baselineTarget
-	v.updateWithDt(dt, now)
+	// Hold-timeout behavior (mirrors velocityState.updateWithDt)
+	if ctrl.HeldDirection != 0 && cfg.HoldTimeout > 0 && !ctrl.LastHeldAt.IsZero() {
+		if now.Sub(ctrl.LastHeldAt) > cfg.HoldTimeout {
+			ctrl.HeldDirection = 0
+			ctrl.HoldBeganAt = time.Time{}
+		}
+	}
 
-	next := v.targetDB
+	// Use the provided baseline target as the position for this integration step.
+	ctrl.TargetDB = baselineTarget
 
-	// Restore original controller state so this method is side-effect-free with respect to target.
-	// We intentionally restore held-related fields as well to avoid changing gesture tracking.
-	v.targetDB = savedTarget
-	v.velocityDBPerS = savedVelocity
-	v.heldDirection = savedHeld
-	v.lastHeldAt = savedLastHeldAt
-	v.holdBeganAt = savedHoldBeganAt
+	// Compute per-tick velMax with danger-zone behavior for ramp-up (UP only).
+	velMax := cfg.VelMaxDBPerS
+	if ctrl.HeldDirection == 1 {
+		estVol := ctrl.TargetDB
+		dangerThreshold := cfg.MaxDB - cfg.DangerZoneDB
+		if estVol > dangerThreshold {
+			den := (cfg.MaxDB - dangerThreshold)
+			x := 1.0
+			if den > 0 {
+				x = (estVol - dangerThreshold) / den
+			}
+			if x < 0 {
+				x = 0
+			}
+			if x > 1 {
+				x = 1
+			}
+			extra := 1.0 - (x * x * x)
+			if extra < 0 {
+				extra = 0
+			}
+			if extra > 1 {
+				extra = 1
+			}
+			velMax = cfg.DangerVelMinNear0DBPerS + (cfg.DangerVelMaxDBPerS-cfg.DangerVelMinNear0DBPerS)*extra
+		}
+	}
 
-	return next
+	switch cfg.Mode {
+	case VelocityModeConstant:
+		// Constant-rate hold with optional turbo.
+		rate := 0.0
+		if ctrl.HeldDirection == 1 {
+			rate = cfg.VelMaxDBPerS
+		} else if ctrl.HeldDirection == -1 {
+			rate = -cfg.VelMaxDBPerS
+		}
+
+		if ctrl.HeldDirection != 0 {
+			mult := cfg.AccelTime
+			if mult < 1 {
+				mult = 1
+			}
+			delay := cfg.DecayTau
+			if delay < 0 {
+				delay = 0
+			}
+			if mult > 1 && delay > 0 && !ctrl.HoldBeganAt.IsZero() && now.Sub(ctrl.HoldBeganAt) >= time.Duration(delay*float64(time.Second)) {
+				rate *= mult
+			} else if mult > 1 && delay == 0 {
+				rate *= mult
+			}
+		}
+
+		if rate > 0 && rate > velMax {
+			rate = velMax
+		}
+		if rate < 0 && -rate > velMax {
+			rate = -velMax
+		}
+
+		ctrl.TargetDB += rate * dt
+
+	default:
+		// Accelerating mode.
+		// Precompute accel from VelMax / AccelTime (same semantics as newVelocityState()).
+		accel := 0.0
+		if cfg.AccelTime > 0 {
+			accel = cfg.VelMaxDBPerS / cfg.AccelTime
+		}
+
+		// Snappier direction changes
+		if (ctrl.HeldDirection == 1 && ctrl.VelocityDBPerS < 0) || (ctrl.HeldDirection == -1 && ctrl.VelocityDBPerS > 0) {
+			ctrl.VelocityDBPerS = 0
+		}
+
+		if ctrl.HeldDirection == 1 {
+			ctrl.VelocityDBPerS += accel * dt
+			if ctrl.VelocityDBPerS > velMax {
+				ctrl.VelocityDBPerS = velMax
+			}
+		} else if ctrl.HeldDirection == -1 {
+			ctrl.VelocityDBPerS -= accel * dt
+			if ctrl.VelocityDBPerS < -velMax {
+				ctrl.VelocityDBPerS = -velMax
+			}
+		} else {
+			if cfg.DecayTau <= 0 {
+				ctrl.VelocityDBPerS = 0
+			} else {
+				decay := math.Exp(-dt / cfg.DecayTau)
+				ctrl.VelocityDBPerS *= decay
+			}
+		}
+
+		ctrl.TargetDB += ctrl.VelocityDBPerS * dt
+	}
+
+	// Clamp target to limits
+	if ctrl.TargetDB < cfg.MinDB {
+		ctrl.TargetDB = cfg.MinDB
+		ctrl.VelocityDBPerS = 0
+	}
+	if ctrl.TargetDB > cfg.MaxDB {
+		ctrl.TargetDB = cfg.MaxDB
+		ctrl.VelocityDBPerS = 0
+	}
+
+	return ctrl, ctrl.TargetDB
 }
 
 // shouldSendUpdate returns true if we should send an update to CamillaDSP.

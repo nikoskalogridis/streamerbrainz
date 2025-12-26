@@ -229,13 +229,15 @@ func main() {
 		daemonState.SetObservedProcessingState(dspState, now)
 	}
 
-	// Initialize velocity engine using daemon state's observed volume as baseline.
-	velState := newVelocityState(cfg.ToVelocityConfig())
+	// Initialize reducer-owned volume controller state using daemon state's observed volume as baseline.
+	velCfg := cfg.ToVelocityConfig()
 	if daemonState.Camilla.VolumeKnown {
-		velState.updateVolume(daemonState.Camilla.VolumeDB)
+		daemonState.VolumeCtrl.TargetDB = daemonState.Camilla.VolumeDB
 	} else {
-		velState.updateVolume(safeDefaultDB)
+		daemonState.VolumeCtrl.TargetDB = safeDefaultDB
 	}
+	// Ensure controller timing starts in a sane state.
+	daemonState.VolumeCtrl.LastHeldAt = time.Now()
 
 	// Initialize rotary encoder state
 	rotary := newRotaryState()
@@ -254,7 +256,7 @@ func main() {
 
 	// Start daemon brain
 	g.Go(func() error {
-		runDaemon(ctx, actions, client, velState, daemonState, cfg.CamillaDSP.UpdateHz, logger)
+		runDaemon(ctx, actions, client, velCfg, daemonState, cfg.CamillaDSP.UpdateHz, logger)
 		return nil
 	})
 

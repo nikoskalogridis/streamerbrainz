@@ -20,7 +20,7 @@ import (
 //
 // Refinements in this version:
 //   - Use an explicit event queue and command queue (no nested/re-entrant execution).
-//   - Compute velocity config once (no repeated inline closures).
+//   - Reducer is pure and owns controller state via DaemonState.VolumeCtrl (Option A).
 //
 // ============================================================================
 
@@ -37,7 +37,7 @@ func runDaemon(
 	ctx context.Context,
 	actions <-chan Action,
 	client *CamillaDSPClient,
-	velState *velocityState,
+	cfg VelocityConfig,
 	state *DaemonState,
 	updateHz int,
 	logger *slog.Logger,
@@ -52,17 +52,10 @@ func runDaemon(
 	ticker := time.NewTicker(updateInterval)
 	defer ticker.Stop()
 
-	// Configure the velocity engine's dt clamp relative to the daemon tick rate.
-	// Note: velocity engine is a controller, not the global state store.
-	if velState != nil {
-		velState.setUpdateHz(updateHz)
-	}
-
-	// Cache velocity config once for reducer calls.
-	// If velState is nil, cfg is the zero value; the reducer handles that.
-	var cfg VelocityConfig
-	if velState != nil {
-		cfg = velState.cfg
+	// Keep dt clamping consistent with the old velocity engine behavior.
+	// Allow up to ~2 ticks worth of time to be integrated in one step.
+	if updateHz > 0 {
+		cfg.MaxDt = 2.0 / float64(updateHz)
 	}
 
 	lastTick := time.Now()
@@ -89,7 +82,7 @@ func runDaemon(
 			ev := eventQueue[0]
 			eventQueue = eventQueue[1:]
 
-			rr := Reduce(state, ev, velState, cfg)
+			rr := Reduce(state, ev, cfg)
 			if rr.State != nil {
 				state = rr.State
 			}
