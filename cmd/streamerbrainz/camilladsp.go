@@ -16,7 +16,16 @@ import (
 type CamillaDSPClientInterface interface {
 	SetVolume(targetDB float64) (float64, error)
 	GetVolume() (float64, error)
-	ToggleMute() error
+
+	// Mute control (default fader/control "Main")
+	GetMute() (bool, error)
+	SetMute(mute bool) error
+	ToggleMute() (bool, error) // returns new mute state
+
+	// State/config helpers for initial daemon sync
+	GetConfigFilePath() (string, error)
+	GetState() (string, error)
+
 	Close() error
 }
 
@@ -231,11 +240,131 @@ func (c *CamillaDSPClient) GetVolume() (float64, error) {
 	return volResp.GetVolume.Value, nil
 }
 
-// ToggleMute sends a ToggleMute command to CamillaDSP
-func (c *CamillaDSPClient) ToggleMute() error {
-	c.logger.Debug("ToggleMute")
-	if err := c.send("ToggleMute"); err != nil {
-		return fmt.Errorf("toggle mute: %w", err)
+// GetMute queries CamillaDSP for the current mute state.
+func (c *CamillaDSPClient) GetMute() (bool, error) {
+	cmd := "GetMute"
+
+	response, err := c.sendAndRead(cmd, c.readTimeout)
+	if err != nil {
+		return false, fmt.Errorf("get mute: %w", err)
 	}
+
+	var muteResp struct {
+		GetMute struct {
+			Result string `json:"result"`
+			Value  bool   `json:"value"`
+		} `json:"GetMute"`
+	}
+
+	if err := json.Unmarshal(response, &muteResp); err != nil {
+		c.logger.Warn("failed to parse GetMute response", "error", err)
+		return false, err
+	}
+
+	c.logger.Debug("GetMute", "mute", muteResp.GetMute.Value)
+
+	return muteResp.GetMute.Value, nil
+}
+
+// SetMute sets the mute state in CamillaDSP.
+func (c *CamillaDSPClient) SetMute(mute bool) error {
+	cmd := map[string]any{"SetMute": mute}
+
+	response, err := c.sendAndRead(cmd, c.readTimeout)
+	if err != nil {
+		return fmt.Errorf("set mute: %w", err)
+	}
+
+	var setResp struct {
+		SetMute struct {
+			Result string `json:"result"`
+		} `json:"SetMute"`
+	}
+
+	if err := json.Unmarshal(response, &setResp); err != nil {
+		c.logger.Warn("failed to parse SetMute response", "error", err)
+		return nil // Assume success if we can't parse the response
+	}
+
+	c.logger.Debug("SetMute", "mute", mute, "result", setResp.SetMute.Result)
+
 	return nil
+}
+
+// ToggleMute sends a ToggleMute command to CamillaDSP and returns the new mute state.
+func (c *CamillaDSPClient) ToggleMute() (bool, error) {
+	cmd := "ToggleMute"
+
+	response, err := c.sendAndRead(cmd, c.readTimeout)
+	if err != nil {
+		return false, fmt.Errorf("toggle mute: %w", err)
+	}
+
+	var toggleResp struct {
+		ToggleMute struct {
+			Result string `json:"result"`
+			Value  bool   `json:"value"`
+		} `json:"ToggleMute"`
+	}
+
+	if err := json.Unmarshal(response, &toggleResp); err != nil {
+		c.logger.Warn("failed to parse ToggleMute response", "error", err)
+		return false, err
+	}
+
+	c.logger.Debug("ToggleMute", "mute", toggleResp.ToggleMute.Value, "result", toggleResp.ToggleMute.Result)
+
+	return toggleResp.ToggleMute.Value, nil
+}
+
+// GetConfigFilePath queries CamillaDSP for the currently active config file path.
+func (c *CamillaDSPClient) GetConfigFilePath() (string, error) {
+	cmd := "GetConfigFilePath"
+
+	response, err := c.sendAndRead(cmd, c.readTimeout)
+	if err != nil {
+		return "", fmt.Errorf("get config file path: %w", err)
+	}
+
+	var resp struct {
+		GetConfigFilePath struct {
+			Result string `json:"result"`
+			Value  string `json:"value"`
+		} `json:"GetConfigFilePath"`
+	}
+
+	if err := json.Unmarshal(response, &resp); err != nil {
+		c.logger.Warn("failed to parse GetConfigFilePath response", "error", err)
+		return "", err
+	}
+
+	c.logger.Debug("GetConfigFilePath", "path", resp.GetConfigFilePath.Value, "result", resp.GetConfigFilePath.Result)
+
+	return resp.GetConfigFilePath.Value, nil
+}
+
+// GetState queries CamillaDSP for the current processing state ("Running", "Paused", etc.).
+func (c *CamillaDSPClient) GetState() (string, error) {
+	cmd := "GetState"
+
+	response, err := c.sendAndRead(cmd, c.readTimeout)
+	if err != nil {
+		return "", fmt.Errorf("get state: %w", err)
+	}
+
+	var resp struct {
+		GetState struct {
+			Result string `json:"result"`
+			Value  string `json:"value"`
+		} `json:"GetState"`
+	}
+
+	if err := json.Unmarshal(response, &resp); err != nil {
+		c.logger.Warn("failed to parse GetState response", "error", err)
+		return "", err
+	}
+
+	c.logger.Debug("GetState", "state", resp.GetState.Value, "result", resp.GetState.Result)
+
+	return resp.GetState.Value, nil
 }

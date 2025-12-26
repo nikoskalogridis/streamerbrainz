@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -31,8 +33,11 @@ type IPCResponse struct {
 	Error  string `json:"error,omitempty"` // error message if status == "error"
 }
 
-// runIPCServer starts the Unix domain socket server
-func runIPCServer(socketPath string, actions chan<- Action, logger *slog.Logger) error {
+// runIPCServer starts the Unix domain socket server.
+// It runs until ctx is canceled, at which point it closes the listener and exits.
+//
+// This function is context-aware so the main program can implement proper shutdown semantics.
+func runIPCServer(ctx context.Context, socketPath string, actions chan<- Action, logger *slog.Logger) error {
 	// Remove existing socket file if it exists
 	if err := os.RemoveAll(socketPath); err != nil {
 		return fmt.Errorf("remove existing socket: %w", err)
@@ -43,38 +48,44 @@ func runIPCServer(socketPath string, actions chan<- Action, logger *slog.Logger)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", socketPath, err)
 	}
+	defer listener.Close()
+	defer os.Remove(socketPath)
 
 	// Make socket accessible (consider security implications in production)
 	if err := os.Chmod(socketPath, 0666); err != nil {
-		listener.Close()
 		return fmt.Errorf("chmod socket: %w", err)
 	}
 
 	logger.Info("IPC listening", "socket", socketPath)
 
-	// Accept connections in a loop
+	// Close the listener on shutdown. This unblocks Accept().
 	go func() {
-		defer listener.Close()
-		defer os.Remove(socketPath)
-
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				// Check if listener was closed (e.g., during shutdown)
-				if strings.Contains(err.Error(), "use of closed network connection") {
-					logger.Debug("IPC listener closed")
-					return
-				}
-				logger.Error("IPC accept error", "error", err)
-				continue
-			}
-
-			// Handle connection in a separate goroutine
-			go handleIPCConnection(conn, actions, logger)
-		}
+		<-ctx.Done()
+		_ = listener.Close()
 	}()
 
-	return nil
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			// Exit cleanly on shutdown/close.
+			if ctx.Err() != nil {
+				logger.Debug("IPC listener closed (shutdown)")
+				return nil
+			}
+
+			// Some platforms return net.ErrClosed; keep this defensive.
+			if errors.Is(err, net.ErrClosed) || strings.Contains(err.Error(), "use of closed network connection") {
+				logger.Debug("IPC listener closed")
+				return nil
+			}
+
+			logger.Error("IPC accept error", "error", err)
+			continue
+		}
+
+		// Handle connection in a separate goroutine.
+		go handleIPCConnection(conn, actions, logger)
+	}
 }
 
 // handleIPCConnection processes a single IPC client connection

@@ -142,6 +142,19 @@ func (v *velocityState) release() {
 	v.holdBeganAt = time.Time{}
 }
 
+// stopMoving cancels any in-progress motion immediately without claiming the server volume changed.
+//
+// Use this when an external action (e.g. rotary step, absolute set) should override and stop
+// hold/velocity-based movement.
+//
+// This is intended to be called only by the daemon goroutine (single-owner).
+func (v *velocityState) stopMoving() {
+	v.release()
+	v.velocityDBPerS = 0
+	// Ensure turbo/gesture tracking restarts cleanly on the next hold.
+	v.holdBeganAt = time.Time{}
+}
+
 // updateVolume synchronizes the internal state with the server's actual volume.
 //
 // This is intended to be called only by the daemon goroutine (single-owner).
@@ -330,6 +343,43 @@ func (v *velocityState) setUpdateHz(updateHz int) {
 // This is intended to be called only by the daemon goroutine (single-owner).
 func (v *velocityState) getTarget() float64 {
 	return v.targetDB
+}
+
+// computeNextTargetWithDt advances the velocity engine for one step and returns the
+// resulting desired target volume, without committing it to v.targetDB.
+//
+// This enables the daemon to own "desired volume" in a separate state container
+// (e.g. DaemonState), while still reusing the velocity engine dynamics.
+//
+// Parameters:
+//   - baselineTarget: the starting target to integrate from (daemon-owned desired volume)
+//   - dt/now: timing inputs (same as updateWithDt)
+//
+// This is intended to be called only by the daemon goroutine (single-owner).
+func (v *velocityState) computeNextTargetWithDt(baselineTarget float64, dt float64, now time.Time) float64 {
+	// Save fields that updateWithDt mutates. Note that updateWithDt may also mutate
+	// heldDirection/holdBeganAt/lastHeldAt via timeout handling, so we preserve those too.
+	savedTarget := v.targetDB
+	savedVelocity := v.velocityDBPerS
+	savedHeld := v.heldDirection
+	savedLastHeldAt := v.lastHeldAt
+	savedHoldBeganAt := v.holdBeganAt
+
+	// Integrate using the provided baseline as the current target.
+	v.targetDB = baselineTarget
+	v.updateWithDt(dt, now)
+
+	next := v.targetDB
+
+	// Restore original controller state so this method is side-effect-free with respect to target.
+	// We intentionally restore held-related fields as well to avoid changing gesture tracking.
+	v.targetDB = savedTarget
+	v.velocityDBPerS = savedVelocity
+	v.heldDirection = savedHeld
+	v.lastHeldAt = savedLastHeldAt
+	v.holdBeganAt = savedHoldBeganAt
+
+	return next
 }
 
 // shouldSendUpdate returns true if we should send an update to CamillaDSP.

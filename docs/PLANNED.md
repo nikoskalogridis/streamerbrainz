@@ -31,7 +31,7 @@ Notes:
 - Optional source priority / source arbitration when multiple integrations emit events
 
 ### Configuration / extensibility
-- Config file support (in addition to flags), if/when needed
+- ~~Config file support (in addition to flags), if/when needed~~
 - Clean public API (separate from internal integration plumbing)
 
 ## Librespot integration

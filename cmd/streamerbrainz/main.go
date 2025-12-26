@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
+	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 )
 
@@ -192,58 +196,99 @@ func main() {
 	}
 	defer client.Close()
 
-	// Query initial volume from CamillaDSP
+	// Initialize daemon state and populate it from CamillaDSP (authoritative source of truth).
+	daemonState := &DaemonState{}
+	now := time.Now()
+
+	// Volume
 	initialVol, err := client.GetVolume()
 	if err != nil {
 		logger.Warn("failed to query initial volume, using safe default", "error", err, "safe_default_db", safeDefaultDB)
 		initialVol = safeDefaultDB
 	}
+	daemonState.SetObservedVolume(initialVol, now)
 
-	// Initialize velocity engine
+	// Mute
+	if muted, err := client.GetMute(); err != nil {
+		logger.Warn("failed to query initial mute state", "error", err)
+	} else {
+		daemonState.SetObservedMute(muted, now)
+	}
+
+	// Config file path (best-effort)
+	if cfgPath, err := client.GetConfigFilePath(); err != nil {
+		logger.Warn("failed to query initial config file path", "error", err)
+	} else {
+		daemonState.SetObservedConfigFilePath(cfgPath, now)
+	}
+
+	// Processing state (best-effort)
+	if dspState, err := client.GetState(); err != nil {
+		logger.Warn("failed to query initial processing state", "error", err)
+	} else {
+		daemonState.SetObservedProcessingState(dspState, now)
+	}
+
+	// Initialize velocity engine using daemon state's observed volume as baseline.
 	velState := newVelocityState(cfg.ToVelocityConfig())
-	velState.updateVolume(initialVol)
+	if daemonState.Camilla.VolumeKnown {
+		velState.updateVolume(daemonState.Camilla.VolumeDB)
+	} else {
+		velState.updateVolume(safeDefaultDB)
+	}
 
 	// Initialize rotary encoder state
 	rotary := newRotaryState()
 
-	// Handle shutdown
-	sigc := make(chan os.Signal, 1)
-	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
+	// Coordinated shutdown using context + errgroup.
+	// - ctx is canceled on SIGINT/SIGTERM
+	// - goroutines should return on ctx.Done()
+	// - main waits for all components to stop before exiting
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	g, ctx := errgroup.WithContext(ctx)
 
 	// Create action channel - central command bus
 	actions := make(chan Action, 64)
 
-	// Start daemon brain in a goroutine
-	go runDaemon(actions, client, velState, cfg.CamillaDSP.UpdateHz, logger)
+	// Start daemon brain
+	g.Go(func() error {
+		runDaemon(ctx, actions, client, velState, daemonState, cfg.CamillaDSP.UpdateHz, logger)
+		return nil
+	})
 
-	// Start IPC server
-	if err := runIPCServer(cfg.IPC.SocketPath, actions, logger); err != nil {
-		logger.Error("failed to start IPC server", "error", err)
-		os.Exit(1)
-	}
+	// Start IPC server (context-aware; blocks until ctx is canceled)
+	g.Go(func() error {
+		return runIPCServer(ctx, cfg.IPC.SocketPath, actions, logger)
+	})
 
 	// Enable Plex integration (webhooks + session polling) if configured.
+	// NOTE: setupPlexWebhook currently isn't context-aware; it likely starts background
+	// work internally. We keep the existing behavior. If it fails, we cancel the program
+	// and let the coordinated shutdown path handle teardown.
 	if plexEnabled {
 		if err := setupPlexWebhook(cfg.Plex.ServerURL, cfg.Plex.TokenFile, cfg.Plex.MachineID, actions, logger); err != nil {
 			logger.Error("failed to setup Plex webhook", "error", err)
-			os.Exit(1)
+			stop()
 		}
 	}
 
-	// Start webhooks HTTP server
-	go func() {
-		if err := runWebhooksServer(cfg.Webhooks.Port, logger); err != nil {
-			logger.Error("webhooks server error", "error", err)
-			os.Exit(1)
-		}
-	}()
+	// Start webhooks HTTP server (context-aware; blocks until ctx is canceled)
+	g.Go(func() error {
+		return runWebhooksServer(ctx, cfg.Webhooks.Port, logger)
+	})
 
 	events := make(chan inputEvent, 64)
 	readErr := make(chan error, len(openDevices))
 
-	// Start a reader goroutine for each input device
+	// Start a reader goroutine for each input device and track them for shutdown.
+	var inputWG sync.WaitGroup
+	inputWG.Add(len(openDevices))
+
 	for _, od := range openDevices {
 		go func(file *os.File, name string, devType InputDeviceType) {
+			defer inputWG.Done()
 			logger.Debug("starting input reader", "device", name, "type", devType)
 			readInputEvents(file, events, readErr)
 			logger.Warn("input reader stopped", "device", name)
@@ -311,11 +356,28 @@ func main() {
 		// --------------------------------------------------------------------
 		// Shutdown handling
 		// --------------------------------------------------------------------
-		case <-sigc:
+		case <-ctx.Done():
 			logger.Info("shutting down")
-			client.Close()
+
+			// Stop producers by closing input devices. This unblocks readInputEvents.
 			for _, od := range openDevices {
-				od.file.Close()
+				_ = od.file.Close()
+			}
+
+			// Ensure input reader goroutines have exited before we close the actions channel.
+			// This reduces the risk of panics from sends to a closed channel during teardown.
+			inputWG.Wait()
+
+			// Close the actions channel to signal downstream consumers (daemon) to stop.
+			// Safe to close once here because main is the coordinator.
+			close(actions)
+
+			// Close CamillaDSP client connection.
+			_ = client.Close()
+
+			// Wait for background components (daemon, IPC, webhooks) to exit.
+			if err := g.Wait(); err != nil {
+				logger.Error("shutdown error", "error", err)
 			}
 			return
 
