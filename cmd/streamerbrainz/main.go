@@ -8,7 +8,6 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
@@ -192,49 +191,6 @@ func main() {
 	}
 	defer client.Close()
 
-	// Initialize daemon state and populate it from CamillaDSP (authoritative source of truth).
-	daemonState := &DaemonState{}
-	now := time.Now()
-
-	// Volume
-	initialVol, err := client.GetVolume()
-	if err != nil {
-		logger.Warn("failed to query initial volume, using safe default", "error", err, "safe_default_db", safeDefaultDB)
-		initialVol = safeDefaultDB
-	}
-	daemonState.SetObservedVolume(initialVol, now)
-
-	// Mute
-	if muted, err := client.GetMute(); err != nil {
-		logger.Warn("failed to query initial mute state", "error", err)
-	} else {
-		daemonState.SetObservedMute(muted, now)
-	}
-
-	// Config file path (best-effort)
-	if cfgPath, err := client.GetConfigFilePath(); err != nil {
-		logger.Warn("failed to query initial config file path", "error", err)
-	} else {
-		daemonState.SetObservedConfigFilePath(cfgPath, now)
-	}
-
-	// Processing state (best-effort)
-	if dspState, err := client.GetState(); err != nil {
-		logger.Warn("failed to query initial processing state", "error", err)
-	} else {
-		daemonState.SetObservedProcessingState(dspState, now)
-	}
-
-	// Initialize reducer-owned volume controller state using daemon state's observed volume as baseline.
-	velCfg := cfg.ToVelocityConfig()
-	if daemonState.Camilla.VolumeKnown {
-		daemonState.VolumeCtrl.TargetDB = daemonState.Camilla.VolumeDB
-	} else {
-		daemonState.VolumeCtrl.TargetDB = safeDefaultDB
-	}
-	// Ensure controller timing starts in a sane state.
-	daemonState.VolumeCtrl.LastHeldAt = time.Now()
-
 	// Coordinated shutdown using context + errgroup.
 	// - ctx is canceled on SIGINT/SIGTERM
 	// - goroutines should return on ctx.Done()
@@ -244,12 +200,12 @@ func main() {
 
 	g, ctx := errgroup.WithContext(ctx)
 
-	// Create action channel - central command bus
+	// Central event bus
 	events := make(chan Event, 64)
 
-	// Start daemon brain
+	// Start daemon loop (owns DaemonState and bootstraps via DaemonStarted)
 	g.Go(func() error {
-		runDaemon(ctx, events, client, velCfg, cfg.Rotary, daemonState, cfg.CamillaDSP.UpdateHz, logger)
+		runDaemon(ctx, events, client, cfg.ToVelocityConfig(), cfg.Rotary, cfg.CamillaDSP.UpdateHz, logger)
 		return nil
 	})
 
@@ -259,9 +215,9 @@ func main() {
 	})
 
 	// Enable Plex integration (webhooks + session polling) if configured.
-	// NOTE: setupPlexWebhook currently isn't context-aware; it likely starts background
-	// work internally. We keep the existing behavior. If it fails, we cancel the program
-	// and let the coordinated shutdown path handle teardown.
+	// NOTE: setupPlexWebhook currently isn't context-aware; it may start background
+	// work internally. If it fails, cancel the program and let coordinated shutdown
+	// handle teardown.
 	if cfg.Plex.Enabled {
 		if err := setupPlexWebhook(cfg.Plex.ServerURL, cfg.Plex.TokenFile, cfg.Plex.MachineID, events, logger); err != nil {
 			logger.Error("failed to setup Plex webhook", "error", err)
@@ -336,14 +292,13 @@ func main() {
 	logger.Info("listening", listenInfo...)
 
 	// ============================================================================
-	// Main Event Loop - Input Coordination Only
+	// Main loop - coordination only
 	// ============================================================================
-	// This loop now only handles:
-	//   - Shutdown signals
-	//   - Input errors
-	//   - Translating IR events into Actions
+	// Main is responsible for:
+	// - shutdown coordination (closing input devices, then closing the events channel)
+	// - surfacing input reader errors
 	//
-	// The daemon brain (runDaemon) handles all state updates and CamillaDSP.
+	// All state lives inside the daemon loop (runDaemon).
 	// ============================================================================
 
 	for {
@@ -359,11 +314,11 @@ func main() {
 				_ = od.file.Close()
 			}
 
-			// Ensure input reader goroutines have exited before we close the actions channel.
+			// Ensure input reader goroutines have exited before we close the event bus.
 			// This reduces the risk of panics from sends to a closed channel during teardown.
 			inputWG.Wait()
 
-			// Close the actions channel to signal downstream consumers (daemon) to stop.
+			// Close the event bus to signal downstream consumers (daemon) to stop.
 			// Safe to close once here because main is the coordinator.
 			close(events)
 
@@ -381,11 +336,7 @@ func main() {
 		// --------------------------------------------------------------------
 		case err := <-readErr:
 			logger.Error("input reader error", "error", err)
-			// Note: We continue running even if one device fails
-			// This allows other devices to keep working
-
-			// Input events are translated into Actions inside the input reader goroutines.
-			// Main no longer receives raw input events here.
+			// Note: we continue running even if one device fails so other devices keep working.
 
 		}
 	}

@@ -7,47 +7,50 @@ import (
 )
 
 // ============================================================================
-// Central Daemon Loop - Reducer-driven "Daemon Brain"
+// Daemon loop (orchestration)
 // ============================================================================
 //
-// This version wires the reducer into the daemon loop.
+// Responsibilities:
+// - Receive Events from multiple producers (input, IPC, integrations)
+// - Assign timestamps to ingress events via TimedEvent (reducer stays deterministic)
+// - Emit Tick at a fixed cadence
+// - Reduce events into (next state, Commands)
+// - Execute Commands via the effects layer (runEffect) WITHOUT blocking the event loop,
+//   and feed observations back as Events
 //
-// Design rules enforced here:
-//   - The reducer performs no I/O and computes: next state + commands.
-//   - The daemon loop is the only place that executes side effects (CamillaDSP calls).
-//   - CamillaDSP responses are turned into Events and fed back into the reducer.
-//   - No direct "consume intent" logic or imperative action handling remains here.
+// Key design rules:
+// - Reduce() is pure: no I/O, no wall clock, no external mutation
+// - This loop is the only place that sequences reduction and side effects
+// - Side effects are isolated in `effects.go` (runEffect)
 //
-// Refinements in this version:
-//   - Use an explicit event queue and command queue (no nested/re-entrant execution).
-//   - Reducer is pure and owns controller state via DaemonState.VolumeCtrl (Option A).
+// Implementation notes:
+// - Uses explicit event/command queues to avoid re-entrant execution
+// - Commands are executed by a dedicated worker goroutine so CamillaDSP calls never block
+//   the event loop
 //
 // ============================================================================
 
-// runDaemon is the main daemon loop that:
-//   - Receives Events from multiple sources
-//   - Emits Tick events on a fixed cadence
-//   - Reduces events into (state, commands)
-//   - Executes commands against CamillaDSP and feeds observations back into the reducer
+// runDaemon is the orchestrator:
+// - Ingress: receives external Events and wraps them in TimedEvent{At: time.Now()}
+// - Scheduling: produces Tick events at a fixed cadence
+// - Reduction: calls Reduce() to compute next state + Commands
+// - Effects: executes Commands via a worker and feeds resulting observation Events back into Reduce()
 //
-// Shutdown semantics:
-//   - Exits when ctx is canceled
-//   - Exits cleanly when the actions channel is closed
+// Shutdown:
+// - Returns when ctx is canceled
+// - Returns cleanly when the events channel is closed
 func runDaemon(
 	ctx context.Context,
 	events <-chan Event,
 	client *CamillaDSPClient,
 	cfg VelocityConfig,
 	rotaryCfg RotaryConfig,
-	state *DaemonState,
 	updateHz int,
 	logger *slog.Logger,
 ) {
-	// Guard: reducer-driven daemon expects a state container.
-	if state == nil {
-		logger.Error("daemon state is nil")
-		return
-	}
+	state := &DaemonState{}
+	state.VolumeCtrl.TargetDB = safeDefaultDB
+	state.VolumeCtrl.LastHeldAt = time.Now()
 
 	// Configure tick cadence.
 	updateInterval := time.Second / time.Duration(updateHz)
@@ -64,9 +67,15 @@ func runDaemon(
 
 	// Explicit queues:
 	// - eventQueue holds events awaiting reduction
-	// - cmdQueue holds commands awaiting execution
+	// - cmdQueue holds commands awaiting execution (staged for dispatch to worker)
 	var eventQueue []Event
 	var cmdQueue []Command
+
+	// Worker channels:
+	// - cmdCh: daemon -> worker
+	// - obsCh: worker -> daemon (observation events)
+	cmdCh := make(chan Command, 64)
+	obsCh := make(chan Event, 64)
 
 	enqueueEvent := func(ev Event) {
 		eventQueue = append(eventQueue, ev)
@@ -92,21 +101,62 @@ func runDaemon(
 		}
 	}
 
-	// Execute all queued commands, enqueuing observation events.
+	// Dispatch all queued commands to the worker (non-blocking).
+	// If the worker queue is full, keep remaining commands queued for the next flush.
 	flushCommands := func() {
 		for len(cmdQueue) > 0 {
 			cmd := cmdQueue[0]
-			cmdQueue = cmdQueue[1:]
 
-			runEffect(client, cmd, logger, func(obs Event) {
-				enqueueEvent(obs)
-			})
-
-			// Observations should be reduced promptly to keep state coherent and
-			// allow the reducer to emit follow-up commands (if any).
-			flushEvents()
+			select {
+			case cmdCh <- cmd:
+				cmdQueue = cmdQueue[1:]
+			default:
+				// Worker is backed up; try again later.
+				return
+			}
 		}
 	}
+
+	// Drain any available observation events from the worker without blocking.
+	// Observations are reduced promptly to keep state coherent and allow follow-up commands.
+	drainObservations := func() {
+		for {
+			select {
+			case obs := <-obsCh:
+				enqueueEvent(obs)
+			default:
+				return
+			}
+		}
+	}
+
+	// Start effects worker.
+	// All CamillaDSP I/O happens here; the daemon event loop remains responsive.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case cmd := <-cmdCh:
+				runEffect(client, cmd, logger, func(obs Event) {
+					// Avoid blocking the worker indefinitely; if obsCh is full, drop and rely on future
+					// polling/commands to converge. This prevents deadlock.
+					select {
+					case obsCh <- obs:
+					default:
+						if logger != nil {
+							logger.Warn("effects observation queue full, dropping event")
+						}
+					}
+				})
+			}
+		}
+	}()
+
+	// Bootstrap: ask reducer to emit initial CmdGet* commands.
+	enqueueEvent(TimedEvent{Event: DaemonStarted{}, At: time.Now()})
+	flushEvents()
+	flushCommands()
 
 	// Main loop
 	for {
@@ -115,25 +165,33 @@ func runDaemon(
 			logger.Info("daemon stopping (context canceled)")
 			return
 
-		case act, ok := <-events:
+		case obs := <-obsCh:
+			// Reduce observations as soon as they arrive.
+			enqueueEvent(obs)
+			flushEvents()
+			flushCommands()
+
+		case ev, ok := <-events:
 			if !ok {
 				logger.Info("daemon stopping (events channel closed)")
 				return
 			}
-			enqueueEvent(TimedEvent{Event: act, At: time.Now()})
+			enqueueEvent(TimedEvent{Event: ev, At: time.Now()})
 			flushEvents()
 			flushCommands()
 
 		case now := <-ticker.C:
+			// Periodic housekeeping:
+			// - integrate hold/velocity controller (Tick)
+			// - drain any pending observations
+			// - dispatch any queued commands
 			dt := now.Sub(lastTick).Seconds()
 			lastTick = now
+
 			enqueueEvent(Tick{Now: now, Dt: dt})
+			drainObservations()
 			flushEvents()
 			flushCommands()
 		}
 	}
 }
-
-// NOTE:
-// Command execution is implemented in `effects.go` as `runEffect(...)`.
-// This file is only responsible for orchestrating event/command queues and reducer invocation.
