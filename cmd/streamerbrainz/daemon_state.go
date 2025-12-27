@@ -21,6 +21,10 @@ type DaemonState struct {
 	// This embeds what used to be mutated inside velocityState so the reducer can be pure.
 	VolumeCtrl VolumeControllerState
 
+	// Rotary is reducer-owned state used for rotary velocity detection and step scaling policy.
+	// Input handlers should emit raw rotary actions; the reducer should apply velocity policy.
+	Rotary RotaryReducerState
+
 	// Intent contains desired changes that should be applied by the daemon's
 	// centralized effects stage (the only place that should talk to CamillaDSP).
 	Intent DaemonIntent
@@ -50,6 +54,20 @@ type VolumeControllerState struct {
 	// Timing for hold gestures and safety timeouts
 	LastHeldAt  time.Time
 	HoldBeganAt time.Time
+}
+
+// RotaryReducerState tracks recent rotary turns for reducer-side velocity detection.
+// The reducer can use this to implement step scaling (e.g. "fast spin" multiplier)
+// without depending on any external mutable state.
+type RotaryReducerState struct {
+	RecentSteps []RotaryReducerStep
+}
+
+// RotaryReducerStep is one observed rotary detent/step at a given time.
+// Direction is -1 or +1.
+type RotaryReducerStep struct {
+	At        time.Time
+	Direction int
 }
 
 // CamillaDSPState is the daemon's cached view of CamillaDSP.

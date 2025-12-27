@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"math"
 	"time"
 )
@@ -24,10 +23,18 @@ import (
 // ==============================
 
 // Event is the input to the reducer.
-// It can be a user Action, a Tick, or a response/error from CamillaDSP.
 type Event interface {
 	eventMarker()
 }
+
+// TimedEvent wraps any Event with a timestamp assigned by the daemon loop.
+// This keeps payload types clean and makes reducer time-handling deterministic.
+type TimedEvent struct {
+	Event Event
+	At    time.Time
+}
+
+func (TimedEvent) eventMarker() {}
 
 // Tick is emitted by the daemon loop at a fixed cadence.
 // Dt is wall-clock delta in seconds between ticks.
@@ -38,13 +45,9 @@ type Tick struct {
 
 func (Tick) eventMarker() {}
 
-// ActionEvent wraps an existing Action so it can be used as an Event.
-type ActionEvent struct {
-	Action Action
-	At     time.Time
-}
-
-func (ActionEvent) eventMarker() {}
+// NOTE: We intentionally do not have a separate ActionEvent type.
+// User intents are Events directly (e.g. VolumeHeld, RotaryTurn, ToggleMute, ...),
+// and timing is carried by TimedEvent.
 
 // CamillaVolumeObserved is emitted after a successful GetVolume/SetVolume (or any API returning volume).
 type CamillaVolumeObserved struct {
@@ -88,65 +91,6 @@ type CamillaCommandFailed struct {
 func (CamillaCommandFailed) eventMarker() {}
 
 // ==============================
-// Commands (side effects)
-// ==============================
-
-// Command represents an external side effect to be executed by the daemon loop.
-// In this codebase, those are primarily CamillaDSP websocket commands.
-type Command interface {
-	commandMarker()
-	String() string
-}
-
-// CmdSetVolume requests setting volume in CamillaDSP (Main fader volume).
-type CmdSetVolume struct {
-	TargetDB float64
-}
-
-func (CmdSetVolume) commandMarker() {}
-func (c CmdSetVolume) String() string {
-	return fmt.Sprintf("CmdSetVolume(target_db=%.3f)", c.TargetDB)
-}
-
-// CmdToggleMute toggles mute in CamillaDSP (Main).
-type CmdToggleMute struct{}
-
-func (CmdToggleMute) commandMarker() {}
-func (CmdToggleMute) String() string { return "CmdToggleMute()" }
-
-// CmdSetMute sets mute explicitly in CamillaDSP (Main).
-type CmdSetMute struct {
-	Muted bool
-}
-
-func (CmdSetMute) commandMarker()   {}
-func (c CmdSetMute) String() string { return fmt.Sprintf("CmdSetMute(muted=%v)", c.Muted) }
-
-// CmdGetVolume requests current volume from CamillaDSP.
-type CmdGetVolume struct{}
-
-func (CmdGetVolume) commandMarker() {}
-func (CmdGetVolume) String() string { return "CmdGetVolume()" }
-
-// CmdGetMute requests current mute from CamillaDSP.
-type CmdGetMute struct{}
-
-func (CmdGetMute) commandMarker() {}
-func (CmdGetMute) String() string { return "CmdGetMute()" }
-
-// CmdGetConfigFilePath requests current config file path from CamillaDSP.
-type CmdGetConfigFilePath struct{}
-
-func (CmdGetConfigFilePath) commandMarker() {}
-func (CmdGetConfigFilePath) String() string { return "CmdGetConfigFilePath()" }
-
-// CmdGetState requests current processing state from CamillaDSP.
-type CmdGetState struct{}
-
-func (CmdGetState) commandMarker() {}
-func (CmdGetState) String() string { return "CmdGetState()" }
-
-// ==============================
 // Reducer input/output
 // ==============================
 
@@ -171,9 +115,16 @@ type ReduceResult struct {
 // - execute Commands
 // - translate responses into Events
 // - feed those Events back into Reduce()
-func Reduce(s *DaemonState, e Event, cfg VelocityConfig) ReduceResult {
+func Reduce(s *DaemonState, e Event, cfg VelocityConfig, rotaryCfg RotaryConfig) ReduceResult {
 	if s == nil {
 		s = &DaemonState{}
+	}
+
+	// Unwrap timing if present. The reducer must never consult wall clock.
+	var at time.Time
+	if te, ok := e.(TimedEvent); ok {
+		at = te.At
+		e = te.Event
 	}
 
 	var cmds []Command
@@ -182,8 +133,8 @@ func Reduce(s *DaemonState, e Event, cfg VelocityConfig) ReduceResult {
 	case Tick:
 		// Tick drives hold integration and flushes intents into Commands.
 
-		// Establish baseline for integration:
-		//  - desired volume intent if present (authoritative desired for this cycle)
+		// Establish baseline for integration (authoritative desired for this cycle):
+		//  - desired volume intent if present
 		//  - else observed volume if known (CamillaDSP authoritative observed)
 		//  - else controller target (fallback)
 		baseline := s.VolumeCtrl.TargetDB
@@ -194,17 +145,11 @@ func Reduce(s *DaemonState, e Event, cfg VelocityConfig) ReduceResult {
 			baseline = *s.Intent.DesiredVolumeDB
 		}
 
-		// Integrate controller if held; if not held, still allow timeout logic to run
-		// (StepVolumeController includes hold-timeout handling).
-		if s.VolumeCtrl.HeldDirection != 0 {
-			nextCtrl := StepVolumeController(s.VolumeCtrl, baseline, ev.Dt, ev.Now, cfg)
-			s.VolumeCtrl = nextCtrl
+		// Always advance controller so hold-timeout and decay behavior run consistently.
+		nextCtrl := StepVolumeController(s.VolumeCtrl, baseline, ev.Dt, ev.Now, cfg)
+		s.VolumeCtrl = nextCtrl
+		if nextCtrl.HeldDirection != 0 {
 			s.SetDesiredVolume(nextCtrl.TargetDB)
-		} else {
-			// Still step to apply hold-timeout logic and decay behavior while not held.
-			// This keeps VelocityDBPerS decaying in accelerating mode if desired.
-			nextCtrl := StepVolumeController(s.VolumeCtrl, baseline, ev.Dt, ev.Now, cfg)
-			s.VolumeCtrl = nextCtrl
 		}
 
 		// Flush intents into commands (coalesced latest-wins).
@@ -230,91 +175,173 @@ func Reduce(s *DaemonState, e Event, cfg VelocityConfig) ReduceResult {
 			}
 		}
 
-	case ActionEvent:
-		switch a := ev.Action.(type) {
-		case VolumeStep:
-			// Rotary cancels holds and any ongoing controller motion.
-			s.VolumeCtrl.HeldDirection = 0
-			s.VolumeCtrl.VelocityDBPerS = 0
-			s.VolumeCtrl.HoldBeganAt = time.Time{}
+	case RotaryTurn:
+		// Rotary cancels holds and any ongoing controller motion.
+		s.VolumeCtrl.HeldDirection = 0
+		s.VolumeCtrl.VelocityDBPerS = 0
+		s.VolumeCtrl.HoldBeganAt = time.Time{}
 
-			// Determine step size.
-			dbPerStep := a.DbPerStep
-			if dbPerStep == 0 {
-				dbPerStep = defaultRotaryDbPerStep
-			}
-			deltaDB := float64(a.Steps) * dbPerStep
-
-			// Baseline:
-			//  - desired if present
-			//  - else observed volume if known
-			//  - else controller target
-			current := s.VolumeCtrl.TargetDB
-			if s.Camilla.VolumeKnown {
-				current = s.Camilla.VolumeDB
-			}
-			if s.Intent.DesiredVolumeDB != nil {
-				current = *s.Intent.DesiredVolumeDB
-			}
-
-			next := current + deltaDB
-			if next < cfg.MinDB {
-				next = cfg.MinDB
-			}
-			if next > cfg.MaxDB {
-				next = cfg.MaxDB
-			}
-
-			s.SetDesiredVolume(next)
-			// Keep controller position aligned with latest desired target for subsequent ticks.
-			s.VolumeCtrl.TargetDB = next
-
-		case VolumeHeld:
-			// Start or update hold gesture.
-			now := ev.At
-			if now.IsZero() {
-				now = time.Now()
-			}
-
-			// New gesture if transitioning from not-held to held, or reversing direction.
-			if s.VolumeCtrl.HeldDirection == 0 || (a.Direction != 0 && a.Direction != s.VolumeCtrl.HeldDirection) {
-				s.VolumeCtrl.HoldBeganAt = now
-				// Reset velocity on direction change to keep response snappy.
-				if a.Direction != s.VolumeCtrl.HeldDirection {
-					s.VolumeCtrl.VelocityDBPerS = 0
-				}
-			}
-
-			s.VolumeCtrl.HeldDirection = a.Direction
-			s.VolumeCtrl.LastHeldAt = now
-
-		case VolumeRelease:
-			s.VolumeCtrl.HeldDirection = 0
-			s.VolumeCtrl.HoldBeganAt = time.Time{}
-
-		case ToggleMute:
-			s.RequestToggleMute()
-
-		case SetVolumeAbsolute:
-			// Absolute set cancels holds/motion.
-			s.VolumeCtrl.HeldDirection = 0
-			s.VolumeCtrl.VelocityDBPerS = 0
-			s.VolumeCtrl.HoldBeganAt = time.Time{}
-
-			next := a.Db
-			if next < cfg.MinDB {
-				next = cfg.MinDB
-			}
-			if next > cfg.MaxDB {
-				next = cfg.MaxDB
-			}
-
-			s.SetDesiredVolume(next)
-			s.VolumeCtrl.TargetDB = next
-
-		default:
-			// no-op
+		steps := ev.Steps
+		if steps == 0 {
+			break
 		}
+
+		// Track recent rotary steps in reducer-owned state for velocity detection.
+		// Reducer is deterministic: timestamps must be provided by the daemon via TimedEvent.
+		now := at
+		if now.IsZero() {
+			// No timestamp => cannot do windowed velocity detection deterministically.
+			break
+		}
+
+		direction := 1
+		if steps < 0 {
+			direction = -1
+		}
+
+		// Prune old samples outside the velocity window.
+		windowMS := rotaryCfg.VelocityWindowMS
+		cutoff := now.Add(-time.Duration(windowMS) * time.Millisecond)
+		kept := s.Rotary.RecentSteps[:0]
+		for _, st := range s.Rotary.RecentSteps {
+			if st.At.After(cutoff) {
+				kept = append(kept, st)
+			}
+		}
+		s.Rotary.RecentSteps = kept
+
+		// Add each detent as a separate sample so velocity detection is consistent.
+		stepsAbs := steps
+		if stepsAbs < 0 {
+			stepsAbs = -stepsAbs
+		}
+		for i := 0; i < stepsAbs; i++ {
+			s.Rotary.RecentSteps = append(s.Rotary.RecentSteps, RotaryReducerStep{
+				At:        now,
+				Direction: direction,
+			})
+		}
+
+		// Count recent steps in the same direction (including the new ones we just appended).
+		recentCount := 0
+		for i := len(s.Rotary.RecentSteps) - 1; i >= 0; i-- {
+			if s.Rotary.RecentSteps[i].Direction != direction {
+				continue
+			}
+			if !s.Rotary.RecentSteps[i].At.After(cutoff) {
+				continue
+			}
+			recentCount++
+		}
+
+		// Determine effective step size with optional velocity multiplier.
+		dbPerStep := rotaryCfg.DbPerStep
+		if dbPerStep == 0 {
+			dbPerStep = defaultRotaryDbPerStep
+		}
+		if recentCount >= rotaryCfg.VelocityThreshold {
+			dbPerStep *= rotaryCfg.VelocityMultiplier
+		}
+
+		// Apply step to baseline (desired > observed > controller target).
+		current := s.VolumeCtrl.TargetDB
+		if s.Camilla.VolumeKnown {
+			current = s.Camilla.VolumeDB
+		}
+		if s.Intent.DesiredVolumeDB != nil {
+			current = *s.Intent.DesiredVolumeDB
+		}
+
+		deltaDB := float64(steps) * dbPerStep
+		next := current + deltaDB
+		if next < cfg.MinDB {
+			next = cfg.MinDB
+		}
+		if next > cfg.MaxDB {
+			next = cfg.MaxDB
+		}
+
+		s.SetDesiredVolume(next)
+		s.VolumeCtrl.TargetDB = next
+
+	case VolumeStep:
+		// Backward compatibility / IPC: treat VolumeStep as an explicit step-based volume delta.
+		// This bypasses reducer-side velocity detection (callers can set DbPerStep explicitly).
+		s.VolumeCtrl.HeldDirection = 0
+		s.VolumeCtrl.VelocityDBPerS = 0
+		s.VolumeCtrl.HoldBeganAt = time.Time{}
+
+		dbPerStep := ev.DbPerStep
+		if dbPerStep == 0 {
+			dbPerStep = defaultRotaryDbPerStep
+		}
+		deltaDB := float64(ev.Steps) * dbPerStep
+
+		current := s.VolumeCtrl.TargetDB
+		if s.Camilla.VolumeKnown {
+			current = s.Camilla.VolumeDB
+		}
+		if s.Intent.DesiredVolumeDB != nil {
+			current = *s.Intent.DesiredVolumeDB
+		}
+
+		next := current + deltaDB
+		if next < cfg.MinDB {
+			next = cfg.MinDB
+		}
+		if next > cfg.MaxDB {
+			next = cfg.MaxDB
+		}
+
+		s.SetDesiredVolume(next)
+		s.VolumeCtrl.TargetDB = next
+
+	case VolumeHeld:
+		// Start or update hold gesture.
+		// Reducer is deterministic: timestamps must be provided by the daemon via TimedEvent.
+		now := at
+		if now.IsZero() {
+			break
+		}
+
+		// New gesture if transitioning from not-held to held, or reversing direction.
+		if s.VolumeCtrl.HeldDirection == 0 || (ev.Direction != 0 && ev.Direction != s.VolumeCtrl.HeldDirection) {
+			s.VolumeCtrl.HoldBeganAt = now
+			// Reset velocity on direction change to keep response snappy.
+			if ev.Direction != s.VolumeCtrl.HeldDirection {
+				s.VolumeCtrl.VelocityDBPerS = 0
+			}
+		}
+
+		s.VolumeCtrl.HeldDirection = ev.Direction
+		s.VolumeCtrl.LastHeldAt = now
+
+	case VolumeRelease:
+		s.VolumeCtrl.HeldDirection = 0
+		s.VolumeCtrl.HoldBeganAt = time.Time{}
+
+	case ToggleMute:
+		s.RequestToggleMute()
+
+	case SetVolumeAbsolute:
+		// Absolute set cancels holds/motion.
+		s.VolumeCtrl.HeldDirection = 0
+		s.VolumeCtrl.VelocityDBPerS = 0
+		s.VolumeCtrl.HoldBeganAt = time.Time{}
+
+		next := ev.Db
+		if next < cfg.MinDB {
+			next = cfg.MinDB
+		}
+		if next > cfg.MaxDB {
+			next = cfg.MaxDB
+		}
+
+		s.SetDesiredVolume(next)
+		s.VolumeCtrl.TargetDB = next
+
+	default:
+		// no-op
 
 	case CamillaVolumeObserved:
 		s.SetObservedVolume(ev.VolumeDB, ev.At)
@@ -348,9 +375,6 @@ func Reduce(s *DaemonState, e Event, cfg VelocityConfig) ReduceResult {
 	case CamillaCommandFailed:
 		// Keep state as-is. Future work could add backoff/retry/disconnected state.
 		_ = ev
-
-	default:
-		// Unknown event type: no-op.
 	}
 
 	return ReduceResult{

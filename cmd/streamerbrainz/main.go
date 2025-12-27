@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"sync"
@@ -154,9 +153,6 @@ func main() {
 	}
 	logger := setupLogger(logLevel)
 
-	// Plex enablement semantics moved to config
-	plexEnabled := cfg.Plex.Enabled
-
 	// Open all input devices
 	type openDevice struct {
 		file *os.File
@@ -239,9 +235,6 @@ func main() {
 	// Ensure controller timing starts in a sane state.
 	daemonState.VolumeCtrl.LastHeldAt = time.Now()
 
-	// Initialize rotary encoder state
-	rotary := newRotaryState()
-
 	// Coordinated shutdown using context + errgroup.
 	// - ctx is canceled on SIGINT/SIGTERM
 	// - goroutines should return on ctx.Done()
@@ -252,25 +245,25 @@ func main() {
 	g, ctx := errgroup.WithContext(ctx)
 
 	// Create action channel - central command bus
-	actions := make(chan Action, 64)
+	events := make(chan Event, 64)
 
 	// Start daemon brain
 	g.Go(func() error {
-		runDaemon(ctx, actions, client, velCfg, daemonState, cfg.CamillaDSP.UpdateHz, logger)
+		runDaemon(ctx, events, client, velCfg, cfg.Rotary, daemonState, cfg.CamillaDSP.UpdateHz, logger)
 		return nil
 	})
 
 	// Start IPC server (context-aware; blocks until ctx is canceled)
 	g.Go(func() error {
-		return runIPCServer(ctx, cfg.IPC.SocketPath, actions, logger)
+		return runIPCServer(ctx, cfg.IPC.SocketPath, events, logger)
 	})
 
 	// Enable Plex integration (webhooks + session polling) if configured.
 	// NOTE: setupPlexWebhook currently isn't context-aware; it likely starts background
 	// work internally. We keep the existing behavior. If it fails, we cancel the program
 	// and let the coordinated shutdown path handle teardown.
-	if plexEnabled {
-		if err := setupPlexWebhook(cfg.Plex.ServerURL, cfg.Plex.TokenFile, cfg.Plex.MachineID, actions, logger); err != nil {
+	if cfg.Plex.Enabled {
+		if err := setupPlexWebhook(cfg.Plex.ServerURL, cfg.Plex.TokenFile, cfg.Plex.MachineID, events, logger); err != nil {
 			logger.Error("failed to setup Plex webhook", "error", err)
 			stop()
 		}
@@ -281,10 +274,10 @@ func main() {
 		return runWebhooksServer(ctx, cfg.Webhooks.Port, logger)
 	})
 
-	events := make(chan inputEvent, 64)
 	readErr := make(chan error, len(openDevices))
 
 	// Start a reader goroutine for each input device and track them for shutdown.
+	// Input readers now emit events directly into the central `events` channel.
 	var inputWG sync.WaitGroup
 	inputWG.Add(len(openDevices))
 
@@ -292,7 +285,7 @@ func main() {
 		go func(file *os.File, name string, devType InputDeviceType) {
 			defer inputWG.Done()
 			logger.Debug("starting input reader", "device", name, "type", devType)
-			readInputEvents(file, events, readErr)
+			readInputEvents(file, events, readErr, logger)
 			logger.Warn("input reader stopped", "device", name)
 		}(od.file, od.path, od.typ)
 	}
@@ -327,7 +320,7 @@ func main() {
 		"vel_danger_vel_min_near0_db_per_sec", cfg.Velocity.DangerVelMinNear0DBPerS,
 		"vel_hold_timeout_ms", cfg.Velocity.HoldTimeoutMS,
 		"webhooks_port", cfg.Webhooks.Port,
-		"plex_enabled", plexEnabled)
+		"plex_enabled", cfg.Plex.Enabled)
 
 	listenInfo := []any{
 		"input_devices", devicePaths,
@@ -337,7 +330,7 @@ func main() {
 		"webhooks_port", cfg.Webhooks.Port,
 	}
 	logger.Info("daemon started", listenInfo...)
-	if plexEnabled {
+	if cfg.Plex.Enabled {
 		listenInfo = append(listenInfo, "plex_server", cfg.Plex.ServerURL)
 	}
 	logger.Info("listening", listenInfo...)
@@ -372,7 +365,7 @@ func main() {
 
 			// Close the actions channel to signal downstream consumers (daemon) to stop.
 			// Safe to close once here because main is the coordinator.
-			close(actions)
+			close(events)
 
 			// Close CamillaDSP client connection.
 			_ = client.Close()
@@ -391,125 +384,10 @@ func main() {
 			// Note: We continue running even if one device fails
 			// This allows other devices to keep working
 
-		// --------------------------------------------------------------------
-		// Input event handling (event translation layer)
-		// --------------------------------------------------------------------
-		// Input events are translated into Actions and sent to daemon brain
-		case ev := <-events:
-			// Route events based on type
-			switch ev.Type {
-			case EV_KEY:
-				handleKeyEvent(ev, actions, logger)
-
-			case EV_REL:
-				handleRelEvent(ev, actions, rotary, &cfg, logger)
-
-			default:
-				// Ignore other event types
-				continue
-			}
+			// Input events are translated into Actions inside the input reader goroutines.
+			// Main no longer receives raw input events here.
 
 		}
-	}
-}
-
-// handleKeyEvent processes EV_KEY events (keyboards, IR remotes)
-func handleKeyEvent(ev inputEvent, actions chan<- Action, logger *slog.Logger) {
-	// Translate key events into Actions
-	switch ev.Code {
-	case KEY_VOLUMEUP:
-		if ev.Value == evValuePress || ev.Value == evValueRepeat {
-			actions <- VolumeHeld{Direction: 1}
-		} else if ev.Value == evValueRelease {
-			actions <- VolumeRelease{}
-		}
-
-	case KEY_VOLUMEDOWN:
-		if ev.Value == evValuePress || ev.Value == evValueRepeat {
-			actions <- VolumeHeld{Direction: -1}
-		} else if ev.Value == evValueRelease {
-			actions <- VolumeRelease{}
-		}
-
-	case KEY_MUTE:
-		if ev.Value == evValuePress {
-			actions <- ToggleMute{}
-		}
-
-	// Media control keys
-	case KEY_PLAYPAUSE:
-		if ev.Value == evValuePress {
-			logger.Debug("media key", "key", "play/pause")
-			// TODO: Add PlayPause action if needed
-		}
-
-	case KEY_NEXTSONG:
-		if ev.Value == evValuePress {
-			logger.Debug("media key", "key", "next")
-			// TODO: Add Next action if needed
-		}
-
-	case KEY_PREVIOUSSONG:
-		if ev.Value == evValuePress {
-			logger.Debug("media key", "key", "previous")
-			// TODO: Add Previous action if needed
-		}
-
-	case KEY_PLAYCD:
-		if ev.Value == evValuePress {
-			logger.Debug("media key", "key", "play")
-			// TODO: Add Play action if needed
-		}
-
-	case KEY_PAUSECD:
-		if ev.Value == evValuePress {
-			logger.Debug("media key", "key", "pause")
-			// TODO: Add Pause action if needed
-		}
-
-	case KEY_STOPCD:
-		if ev.Value == evValuePress {
-			logger.Debug("media key", "key", "stop")
-			// TODO: Add Stop action if needed
-		}
-	}
-}
-
-// handleRelEvent processes EV_REL events (rotary encoders)
-func handleRelEvent(ev inputEvent, actions chan<- Action, rotary *rotaryState, cfg *Config, logger *slog.Logger) {
-	// Only handle rotary encoder codes
-	if ev.Code != REL_DIAL && ev.Code != REL_WHEEL && ev.Code != REL_MISC {
-		return
-	}
-
-	if ev.Value == 0 {
-		return // No movement
-	}
-
-	// Determine direction
-	direction := 1
-	if ev.Value < 0 {
-		direction = -1
-	}
-
-	// Track velocity: count recent steps in same direction
-	recentCount := rotary.addStep(direction, cfg.Rotary.VelocityWindowMS)
-
-	// Calculate step size with optional velocity multiplier
-	dbPerStep := cfg.Rotary.DbPerStep
-
-	if recentCount >= cfg.Rotary.VelocityThreshold {
-		dbPerStep *= cfg.Rotary.VelocityMultiplier
-		logger.Debug("rotary velocity mode",
-			"steps_in_window", recentCount,
-			"multiplier", cfg.Rotary.VelocityMultiplier,
-			"db_per_step", dbPerStep)
-	}
-
-	// Send VolumeStep action (preserves sign from ev.Value)
-	actions <- VolumeStep{
-		Steps:     int(ev.Value),
-		DbPerStep: dbPerStep,
 	}
 }
 

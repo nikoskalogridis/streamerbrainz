@@ -83,7 +83,7 @@ func TestReducer_VolumeStep_Basic(t *testing.T) {
 	state.VolumeCtrl.TargetDB = -30.0
 
 	// Reduce the action
-	rr := Reduce(state, ActionEvent{Action: VolumeStep{Steps: 2, DbPerStep: 0.5}, At: time.Now()}, cfg)
+	rr := Reduce(state, TimedEvent{Event: VolumeStep{Steps: 2, DbPerStep: 0.5}, At: time.Now()}, cfg, RotaryConfig{})
 
 	// No side effects have run yet
 	if len(client.setVolCalls) != 0 {
@@ -93,7 +93,7 @@ func TestReducer_VolumeStep_Basic(t *testing.T) {
 	// Reducer should have emitted a CmdSetVolume once Tick is processed; here we follow the current reducer contract:
 	// it records desired volume intent on the action, and emits commands on Tick.
 	// So we drive a Tick to flush intents into commands.
-	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg)
+	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg, RotaryConfig{})
 
 	if len(rr.Commands) != 1 {
 		t.Fatalf("expected 1 command on Tick, got %d", len(rr.Commands))
@@ -116,7 +116,7 @@ func TestReducer_VolumeStep_Basic(t *testing.T) {
 	}
 
 	// Feed observation back to reducer
-	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg)
+	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg, RotaryConfig{})
 
 	if len(client.setVolCalls) != 1 {
 		t.Fatalf("expected 1 SetVolume call after executing command, got %d", len(client.setVolCalls))
@@ -140,8 +140,8 @@ func TestReducer_VolumeStep_Negative(t *testing.T) {
 	state.SetObservedVolume(-30.0, time.Now())
 	state.VolumeCtrl.TargetDB = -30.0
 
-	rr := Reduce(state, ActionEvent{Action: VolumeStep{Steps: -3, DbPerStep: 0.5}, At: time.Now()}, cfg)
-	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg)
+	rr := Reduce(state, TimedEvent{Event: VolumeStep{Steps: -3, DbPerStep: 0.5}, At: time.Now()}, cfg, RotaryConfig{})
+	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg, RotaryConfig{})
 
 	if len(rr.Commands) != 1 {
 		t.Fatalf("expected 1 command on Tick, got %d", len(rr.Commands))
@@ -160,7 +160,7 @@ func TestReducer_VolumeStep_Negative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetVolume failed: %v", err)
 	}
-	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg)
+	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg, RotaryConfig{})
 
 	if len(client.setVolCalls) != 1 {
 		t.Fatalf("expected 1 SetVolume call after executing command, got %d", len(client.setVolCalls))
@@ -184,8 +184,8 @@ func TestReducer_VolumeStep_ClampMax(t *testing.T) {
 	state.SetObservedVolume(-1.0, time.Now())
 	state.VolumeCtrl.TargetDB = -1.0
 
-	rr := Reduce(state, ActionEvent{Action: VolumeStep{Steps: 10, DbPerStep: 0.5}, At: time.Now()}, cfg)
-	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg)
+	rr := Reduce(state, TimedEvent{Event: VolumeStep{Steps: 10, DbPerStep: 0.5}, At: time.Now()}, cfg, RotaryConfig{})
+	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg, RotaryConfig{})
 
 	if len(rr.Commands) != 1 {
 		t.Fatalf("expected 1 command on Tick, got %d", len(rr.Commands))
@@ -204,7 +204,7 @@ func TestReducer_VolumeStep_ClampMax(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetVolume failed: %v", err)
 	}
-	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg)
+	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg, RotaryConfig{})
 
 	if len(client.setVolCalls) != 1 {
 		t.Fatalf("expected 1 SetVolume call after executing command, got %d", len(client.setVolCalls))
@@ -226,8 +226,8 @@ func TestReducer_VolumeStep_ClampMin(t *testing.T) {
 	state.VolumeCtrl.TargetDB = -64.0
 
 	// Reduce action then Tick to flush into commands
-	rr := Reduce(state, ActionEvent{Action: VolumeStep{Steps: -10, DbPerStep: 0.5}, At: time.Now()}, cfg)
-	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg)
+	rr := Reduce(state, TimedEvent{Event: VolumeStep{Steps: -10, DbPerStep: 0.5}, At: time.Now()}, cfg, RotaryConfig{})
+	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg, RotaryConfig{})
 
 	if len(rr.Commands) != 1 {
 		t.Fatalf("expected 1 command on Tick, got %d", len(rr.Commands))
@@ -247,7 +247,7 @@ func TestReducer_VolumeStep_ClampMin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetVolume failed: %v", err)
 	}
-	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg)
+	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg, RotaryConfig{})
 
 	if len(client.setVolCalls) != 1 {
 		t.Fatalf("expected 1 SetVolume call after executing command, got %d", len(client.setVolCalls))
@@ -272,8 +272,8 @@ func TestReducer_VolumeStep_DefaultStepSize(t *testing.T) {
 	state.VolumeCtrl.TargetDB = -30.0
 
 	// DbPerStep is 0 -> should use defaultRotaryDbPerStep
-	rr := Reduce(state, ActionEvent{Action: VolumeStep{Steps: 2, DbPerStep: 0}, At: time.Now()}, cfg)
-	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg)
+	rr := Reduce(state, TimedEvent{Event: VolumeStep{Steps: 2, DbPerStep: 0}, At: time.Now()}, cfg, RotaryConfig{})
+	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg, RotaryConfig{})
 
 	if len(rr.Commands) != 1 {
 		t.Fatalf("expected 1 command on Tick, got %d", len(rr.Commands))
@@ -293,7 +293,7 @@ func TestReducer_VolumeStep_DefaultStepSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetVolume failed: %v", err)
 	}
-	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg)
+	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg, RotaryConfig{})
 
 	if len(client.setVolCalls) != 1 {
 		t.Fatalf("expected 1 SetVolume call after executing command, got %d", len(client.setVolCalls))
@@ -313,8 +313,8 @@ func TestReducer_VolumeStep_VolumeUnknown(t *testing.T) {
 	// Do not set observed volume in daemon state; this should fall back to controller TargetDB (initially 0.0).
 	state := &DaemonState{}
 
-	rr := Reduce(state, ActionEvent{Action: VolumeStep{Steps: 2, DbPerStep: 0.5}, At: time.Now()}, cfg)
-	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg)
+	rr := Reduce(state, TimedEvent{Event: VolumeStep{Steps: 2, DbPerStep: 0.5}, At: time.Now()}, cfg, RotaryConfig{})
+	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg, RotaryConfig{})
 
 	if len(rr.Commands) != 1 {
 		t.Fatalf("expected 1 command on Tick, got %d", len(rr.Commands))
@@ -334,7 +334,7 @@ func TestReducer_VolumeStep_VolumeUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetVolume failed: %v", err)
 	}
-	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg)
+	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg, RotaryConfig{})
 
 	if len(client.setVolCalls) != 1 {
 		t.Fatalf("expected 1 SetVolume call after executing command, got %d", len(client.setVolCalls))
@@ -355,23 +355,23 @@ func TestReducer_VolumeStep_MultipleSteps(t *testing.T) {
 	state.SetObservedVolume(-30.0, time.Now())
 	state.VolumeCtrl.TargetDB = -30.0
 
-	rr := Reduce(state, ActionEvent{Action: VolumeStep{Steps: 2, DbPerStep: 0.5}, At: time.Now()}, cfg)
-	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg)
+	rr := Reduce(state, TimedEvent{Event: VolumeStep{Steps: 2, DbPerStep: 0.5}, At: time.Now()}, cfg, RotaryConfig{})
+	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg, RotaryConfig{})
 	cmd1 := rr.Commands[0].(CmdSetVolume)
 	v1, _ := client.SetVolume(cmd1.TargetDB)
-	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: v1, At: time.Now()}, cfg)
+	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: v1, At: time.Now()}, cfg, RotaryConfig{})
 
-	rr = Reduce(rr.State, ActionEvent{Action: VolumeStep{Steps: 2, DbPerStep: 0.5}, At: time.Now()}, cfg)
-	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg)
+	rr = Reduce(rr.State, TimedEvent{Event: VolumeStep{Steps: 2, DbPerStep: 0.5}, At: time.Now()}, cfg, RotaryConfig{})
+	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg, RotaryConfig{})
 	cmd2 := rr.Commands[0].(CmdSetVolume)
 	v2, _ := client.SetVolume(cmd2.TargetDB)
-	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: v2, At: time.Now()}, cfg)
+	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: v2, At: time.Now()}, cfg, RotaryConfig{})
 
-	rr = Reduce(rr.State, ActionEvent{Action: VolumeStep{Steps: -1, DbPerStep: 0.5}, At: time.Now()}, cfg)
-	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg)
+	rr = Reduce(rr.State, TimedEvent{Event: VolumeStep{Steps: -1, DbPerStep: 0.5}, At: time.Now()}, cfg, RotaryConfig{})
+	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg, RotaryConfig{})
 	cmd3 := rr.Commands[0].(CmdSetVolume)
 	v3, _ := client.SetVolume(cmd3.TargetDB)
-	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: v3, At: time.Now()}, cfg)
+	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: v3, At: time.Now()}, cfg, RotaryConfig{})
 
 	if len(client.setVolCalls) != 3 {
 		t.Fatalf("expected 3 SetVolume calls, got %d", len(client.setVolCalls))
@@ -397,8 +397,8 @@ func TestReducer_VolumeStep_LargeStepSize(t *testing.T) {
 	state.SetObservedVolume(-30.0, time.Now())
 	state.VolumeCtrl.TargetDB = -30.0
 
-	rr := Reduce(state, ActionEvent{Action: VolumeStep{Steps: 3, DbPerStep: 1.0}, At: time.Now()}, cfg)
-	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg)
+	rr := Reduce(state, TimedEvent{Event: VolumeStep{Steps: 3, DbPerStep: 1.0}, At: time.Now()}, cfg, RotaryConfig{})
+	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg, RotaryConfig{})
 
 	if len(rr.Commands) != 1 {
 		t.Fatalf("expected 1 command on Tick, got %d", len(rr.Commands))
@@ -417,7 +417,7 @@ func TestReducer_VolumeStep_LargeStepSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetVolume failed: %v", err)
 	}
-	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg)
+	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg, RotaryConfig{})
 
 	if len(client.setVolCalls) != 1 {
 		t.Fatalf("expected 1 SetVolume call after executing command, got %d", len(client.setVolCalls))
@@ -442,12 +442,12 @@ func TestReducer_VolumeHeld_Integration(t *testing.T) {
 	state.VolumeCtrl.TargetDB = -30.0
 
 	// Hold, then step, then release. Rotary step should cancel hold movement.
-	rr := Reduce(state, ActionEvent{Action: VolumeHeld{Direction: 1}, At: time.Now()}, cfg)
-	rr = Reduce(rr.State, ActionEvent{Action: VolumeStep{Steps: 2, DbPerStep: 0.5}, At: time.Now()}, cfg)
-	rr = Reduce(rr.State, ActionEvent{Action: VolumeRelease{}, At: time.Now()}, cfg)
+	rr := Reduce(state, TimedEvent{Event: VolumeHeld{Direction: 1}, At: time.Now()}, cfg, RotaryConfig{})
+	rr = Reduce(rr.State, TimedEvent{Event: VolumeStep{Steps: 2, DbPerStep: 0.5}, At: time.Now()}, cfg, RotaryConfig{})
+	rr = Reduce(rr.State, TimedEvent{Event: VolumeRelease{}, At: time.Now()}, cfg, RotaryConfig{})
 
 	// Flush to commands on Tick
-	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg)
+	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg, RotaryConfig{})
 
 	if len(rr.Commands) != 1 {
 		t.Fatalf("expected 1 command on Tick, got %d", len(rr.Commands))
@@ -466,7 +466,7 @@ func TestReducer_VolumeHeld_Integration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetVolume failed: %v", err)
 	}
-	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg)
+	rr = Reduce(rr.State, CamillaVolumeObserved{VolumeDB: currentVol, At: time.Now()}, cfg, RotaryConfig{})
 
 	if len(client.setVolCalls) != 1 {
 		t.Fatalf("expected 1 SetVolume call after executing command, got %d", len(client.setVolCalls))
@@ -487,14 +487,14 @@ func TestReducer_ToggleMute(t *testing.T) {
 	state.SetObservedMute(false, time.Now())
 
 	// Reduce action: should set intent, no command until Tick
-	rr := Reduce(state, ActionEvent{Action: ToggleMute{}, At: time.Now()}, cfg)
+	rr := Reduce(state, TimedEvent{Event: ToggleMute{}, At: time.Now()}, cfg, RotaryConfig{})
 
 	if client.toggleCalls != 0 {
 		t.Errorf("expected 0 ToggleMute calls before executing reducer commands, got %d", client.toggleCalls)
 	}
 
 	// Drive a Tick to flush intents into commands
-	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg)
+	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg, RotaryConfig{})
 
 	if len(rr.Commands) != 1 {
 		t.Fatalf("expected 1 command on Tick, got %d", len(rr.Commands))
@@ -508,7 +508,7 @@ func TestReducer_ToggleMute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToggleMute failed: %v", err)
 	}
-	rr = Reduce(rr.State, CamillaMuteObserved{Muted: muted, At: time.Now()}, cfg)
+	rr = Reduce(rr.State, CamillaMuteObserved{Muted: muted, At: time.Now()}, cfg, RotaryConfig{})
 
 	if client.toggleCalls != 1 {
 		t.Errorf("expected 1 ToggleMute call after executing command, got %d", client.toggleCalls)
@@ -518,8 +518,8 @@ func TestReducer_ToggleMute(t *testing.T) {
 	}
 
 	// Second toggle
-	rr = Reduce(rr.State, ActionEvent{Action: ToggleMute{}, At: time.Now()}, cfg)
-	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg)
+	rr = Reduce(rr.State, TimedEvent{Event: ToggleMute{}, At: time.Now()}, cfg, RotaryConfig{})
+	rr = Reduce(rr.State, Tick{Now: time.Now(), Dt: 0.01}, cfg, RotaryConfig{})
 
 	if len(rr.Commands) != 1 {
 		t.Fatalf("expected 1 command on second Tick, got %d", len(rr.Commands))
@@ -532,7 +532,7 @@ func TestReducer_ToggleMute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToggleMute failed: %v", err)
 	}
-	rr = Reduce(rr.State, CamillaMuteObserved{Muted: muted, At: time.Now()}, cfg)
+	rr = Reduce(rr.State, CamillaMuteObserved{Muted: muted, At: time.Now()}, cfg, RotaryConfig{})
 
 	if client.toggleCalls != 2 {
 		t.Errorf("expected 2 ToggleMute calls after executing second command, got %d", client.toggleCalls)
@@ -565,16 +565,16 @@ func TestReducer_InertiaDecayAfterRelease(t *testing.T) {
 	state.VolumeCtrl.TargetDB = -30.0
 
 	// Press/hold volume up for a few ticks to build up velocity (acceleration).
-	state = Reduce(state, ActionEvent{Action: VolumeHeld{Direction: 1}, At: now}, cfg).State
+	state = Reduce(state, TimedEvent{Event: VolumeHeld{Direction: 1}, At: now}, cfg, RotaryConfig{}).State
 	for i := 0; i < 10; i++ {
 		now = now.Add(33 * time.Millisecond)
-		state = Reduce(state, Tick{Now: now, Dt: 0.033}, cfg).State
+		state = Reduce(state, Tick{Now: now, Dt: 0.033}, cfg, RotaryConfig{}).State
 
 		// In the real program, after each Tick the daemon executes CmdSetVolume and then
 		// feeds CamillaVolumeObserved back into the reducer. If we don't do that here,
 		// the reducer's baseline selection may snap back to the observed volume and
 		// fight the controller's inertial motion.
-		state = Reduce(state, CamillaVolumeObserved{VolumeDB: state.VolumeCtrl.TargetDB, At: now}, cfg).State
+		state = Reduce(state, CamillaVolumeObserved{VolumeDB: state.VolumeCtrl.TargetDB, At: now}, cfg, RotaryConfig{}).State
 	}
 
 	// The controller should have built some positive velocity.
@@ -583,7 +583,7 @@ func TestReducer_InertiaDecayAfterRelease(t *testing.T) {
 	}
 
 	// Release should NOT zero velocity immediately in accelerating mode; it should decay over time.
-	state = Reduce(state, ActionEvent{Action: VolumeRelease{}, At: now}, cfg).State
+	state = Reduce(state, TimedEvent{Event: VolumeRelease{}, At: now}, cfg, RotaryConfig{}).State
 	if state.VolumeCtrl.HeldDirection != 0 {
 		t.Fatalf("expected heldDirection=0 after release, got %d", state.VolumeCtrl.HeldDirection)
 	}
@@ -594,8 +594,8 @@ func TestReducer_InertiaDecayAfterRelease(t *testing.T) {
 	// After release, the target should continue moving for at least one tick (inertia),
 	// and velocity should start decaying.
 	now = now.Add(33 * time.Millisecond)
-	state = Reduce(state, Tick{Now: now, Dt: 0.033}, cfg).State
-	state = Reduce(state, CamillaVolumeObserved{VolumeDB: state.VolumeCtrl.TargetDB, At: now}, cfg).State
+	state = Reduce(state, Tick{Now: now, Dt: 0.033}, cfg, RotaryConfig{}).State
+	state = Reduce(state, CamillaVolumeObserved{VolumeDB: state.VolumeCtrl.TargetDB, At: now}, cfg, RotaryConfig{}).State
 
 	target1 := state.VolumeCtrl.TargetDB
 	vel1 := state.VolumeCtrl.VelocityDBPerS
@@ -614,8 +614,8 @@ func TestReducer_InertiaDecayAfterRelease(t *testing.T) {
 	prevTarget := target1
 	for i := 0; i < 10; i++ {
 		now = now.Add(33 * time.Millisecond)
-		state = Reduce(state, Tick{Now: now, Dt: 0.033}, cfg).State
-		state = Reduce(state, CamillaVolumeObserved{VolumeDB: state.VolumeCtrl.TargetDB, At: now}, cfg).State
+		state = Reduce(state, Tick{Now: now, Dt: 0.033}, cfg, RotaryConfig{}).State
+		state = Reduce(state, CamillaVolumeObserved{VolumeDB: state.VolumeCtrl.TargetDB, At: now}, cfg, RotaryConfig{}).State
 
 		v := state.VolumeCtrl.VelocityDBPerS
 		tgt := state.VolumeCtrl.TargetDB
@@ -657,15 +657,15 @@ func TestReducer_AccelerationBuildsVelocityWhileHeld(t *testing.T) {
 	state.VolumeCtrl.TargetDB = -30.0
 
 	// Start holding volume up.
-	state = Reduce(state, ActionEvent{Action: VolumeHeld{Direction: 1}, At: now}, cfg).State
+	state = Reduce(state, TimedEvent{Event: VolumeHeld{Direction: 1}, At: now}, cfg, RotaryConfig{}).State
 
 	// Step a few ticks and verify velocity increases over time until capped.
 	var prevVel float64
 	for i := 0; i < 8; i++ {
 		now = now.Add(33 * time.Millisecond)
-		state = Reduce(state, Tick{Now: now, Dt: 0.033}, cfg).State
+		state = Reduce(state, Tick{Now: now, Dt: 0.033}, cfg, RotaryConfig{}).State
 		// Simulate that CamillaDSP applies the desired volume (keeps baseline aligned).
-		state = Reduce(state, CamillaVolumeObserved{VolumeDB: state.VolumeCtrl.TargetDB, At: now}, cfg).State
+		state = Reduce(state, CamillaVolumeObserved{VolumeDB: state.VolumeCtrl.TargetDB, At: now}, cfg, RotaryConfig{}).State
 
 		v := state.VolumeCtrl.VelocityDBPerS
 		if v < 0 {

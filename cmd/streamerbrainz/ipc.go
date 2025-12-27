@@ -15,7 +15,7 @@ import (
 // ============================================================================
 // IPC Server - Unix Domain Socket Interface
 // ============================================================================
-// The IPC server allows external clients to send JSON actions to the daemon
+// The IPC server allows external clients to send JSON events to the daemon
 // via a Unix domain socket. This enables:
 //   - Remote control via command-line tools
 //   - Integration with librespot and other audio sources
@@ -23,7 +23,7 @@ import (
 //   - Scripting and automation
 //
 // Protocol: Line-delimited JSON
-//   - Client sends: {"type": "action_name", "data": {...}}
+//   - Client sends: {"type": "event_name", "data": {...}}
 //   - Server responds: {"status": "ok"} or {"status": "error", "error": "msg"}
 // ============================================================================
 
@@ -37,7 +37,7 @@ type IPCResponse struct {
 // It runs until ctx is canceled, at which point it closes the listener and exits.
 //
 // This function is context-aware so the main program can implement proper shutdown semantics.
-func runIPCServer(ctx context.Context, socketPath string, actions chan<- Action, logger *slog.Logger) error {
+func runIPCServer(ctx context.Context, socketPath string, events chan<- Event, logger *slog.Logger) error {
 	// Remove existing socket file if it exists
 	if err := os.RemoveAll(socketPath); err != nil {
 		return fmt.Errorf("remove existing socket: %w", err)
@@ -84,13 +84,13 @@ func runIPCServer(ctx context.Context, socketPath string, actions chan<- Action,
 		}
 
 		// Handle connection in a separate goroutine.
-		go handleIPCConnection(conn, actions, logger)
+		go handleIPCConnection(conn, events, logger)
 	}
 }
 
 // handleIPCConnection processes a single IPC client connection
 // handleIPCConnection handles a single IPC connection
-func handleIPCConnection(conn net.Conn, actions chan<- Action, logger *slog.Logger) {
+func handleIPCConnection(conn net.Conn, events chan<- Event, logger *slog.Logger) {
 	defer conn.Close()
 
 	logger.Debug("IPC connection", "remote_addr", conn.RemoteAddr())
@@ -102,12 +102,12 @@ func handleIPCConnection(conn net.Conn, actions chan<- Action, logger *slog.Logg
 		line := scanner.Text()
 		logger.Debug("IPC received", "line", line)
 
-		// Parse action from JSON
-		action, err := UnmarshalAction([]byte(line))
+		// Parse event from JSON (payload events only; daemon assigns timestamps via TimedEvent)
+		ev, err := UnmarshalEvent([]byte(line))
 		if err != nil {
 			response := IPCResponse{
 				Status: "error",
-				Error:  fmt.Sprintf("parse action: %v", err),
+				Error:  fmt.Sprintf("parse event: %v", err),
 			}
 			if encErr := encoder.Encode(response); encErr != nil {
 				logger.Error("IPC failed to send error response", "error", encErr)
@@ -115,28 +115,24 @@ func handleIPCConnection(conn net.Conn, actions chan<- Action, logger *slog.Logg
 			continue
 		}
 
-		// Send action to daemon
+		// Send event to daemon
 		select {
-		case actions <- action:
-			// Action queued successfully
+		case events <- ev:
+			// Event queued successfully
 			response := IPCResponse{Status: "ok"}
 			if encErr := encoder.Encode(response); encErr != nil {
 				logger.Error("IPC failed to send success response", "error", encErr)
 			}
 		default:
-			// Action channel is full (should rarely happen with buffer)
+			// Event channel is full (should rarely happen with buffer)
 			response := IPCResponse{
 				Status: "error",
-				Error:  "action queue full",
+				Error:  "event queue full",
 			}
 			if encErr := encoder.Encode(response); encErr != nil {
 				logger.Error("IPC failed to send error response", "error", encErr)
 			}
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		logger.Error("IPC scanner error", "error", err)
 	}
 
 	logger.Debug("IPC connection closed")
@@ -145,12 +141,12 @@ func handleIPCConnection(conn net.Conn, actions chan<- Action, logger *slog.Logg
 // ============================================================================
 // IPC Client Utility Functions
 // ============================================================================
-// These functions can be used to send actions to the daemon from external
+// These functions can be used to send events to the daemon from external
 // programs or for testing.
 // ============================================================================
 
-// SendIPCAction sends an action to the daemon via IPC and returns the response
-func SendIPCAction(socketPath string, action Action) error {
+// SendIPCEvent sends an event to the daemon via IPC and returns the response
+func SendIPCEvent(socketPath string, ev Event) error {
 	// Connect to socket
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
@@ -158,27 +154,26 @@ func SendIPCAction(socketPath string, action Action) error {
 	}
 	defer conn.Close()
 
-	// Marshal action
-	data, err := MarshalAction(action)
+	// Marshal event
+	data, err := MarshalEvent(ev)
 	if err != nil {
-		return fmt.Errorf("marshal action: %w", err)
+		return fmt.Errorf("marshal event: %w", err)
 	}
 
-	// Send action (line-delimited JSON)
-	if _, err := fmt.Fprintf(conn, "%s\n", data); err != nil {
-		return fmt.Errorf("send action: %w", err)
+	// Send event
+	if _, err := fmt.Fprintf(conn, "%s\n", strings.TrimSpace(string(data))); err != nil {
+		return fmt.Errorf("send event: %w", err)
 	}
 
 	// Read response
-	var response IPCResponse
 	decoder := json.NewDecoder(conn)
-	if err := decoder.Decode(&response); err != nil {
+	var resp IPCResponse
+	if err := decoder.Decode(&resp); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
 
-	// Check response status
-	if response.Status == "error" {
-		return fmt.Errorf("daemon error: %s", response.Error)
+	if resp.Status != "ok" {
+		return fmt.Errorf("ipc error: %s", resp.Error)
 	}
 
 	return nil

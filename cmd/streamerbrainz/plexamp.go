@@ -15,7 +15,7 @@ import (
 // Plexamp Integration
 // ============================================================================
 // This module receives webhook events from Plex Media Server and converts
-// them to actions. When a webhook is received, it queries the Plex API
+// them to events. When a webhook is received, it queries the Plex API
 // /status/sessions endpoint to get detailed track information, filtering
 // by machineIdentifier to find the correct player.
 //
@@ -122,7 +122,7 @@ func findTrackByMachineIdentifier(container *PlexMediaContainer, machineID strin
 }
 
 // handlePlexWebhook processes incoming Plex webhook events
-func handlePlexWebhook(config PlexampConfig, actions chan<- Action, logger *slog.Logger) http.HandlerFunc {
+func handlePlexWebhook(config PlexampConfig, events chan<- Event, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		logger.Debug("received Plex webhook", "method", r.Method, "path", r.URL.Path)
 
@@ -156,8 +156,8 @@ func handlePlexWebhook(config PlexampConfig, actions chan<- Action, logger *slog
 				"position_ms", track.ViewOffset,
 				"duration_ms", track.Duration)
 
-			// Create action from track info
-			action := PlexStateChanged{
+			// Create event from track info
+			event := PlexStateChanged{
 				State:         track.Player.State,
 				Title:         track.Title,
 				Artist:        track.GrandparentTitle,
@@ -172,7 +172,7 @@ func handlePlexWebhook(config PlexampConfig, actions chan<- Action, logger *slog
 
 			// Send action to daemon
 			select {
-			case actions <- action:
+			case events <- event:
 				logger.Debug("Plex action sent", "state", track.Player.State)
 			default:
 				logger.Warn("action queue full, dropping Plex event")
@@ -182,7 +182,7 @@ func handlePlexWebhook(config PlexampConfig, actions chan<- Action, logger *slog
 }
 
 // setupPlexWebhook registers the Plex webhook endpoint
-func setupPlexWebhook(serverUrl, tokenFile, machineID string, actions chan<- Action, logger *slog.Logger) error {
+func setupPlexWebhook(serverUrl, tokenFile, machineID string, events chan<- Event, logger *slog.Logger) error {
 	// Load token from file
 	tokenBytes, err := os.ReadFile(tokenFile)
 	if err != nil {
@@ -199,7 +199,7 @@ func setupPlexWebhook(serverUrl, tokenFile, machineID string, actions chan<- Act
 		MachineIdentifier: machineID,
 	}
 
-	http.HandleFunc("/webhooks/plex", handlePlexWebhook(plexConfig, actions, logger))
+	http.HandleFunc("/webhooks/plex", handlePlexWebhook(plexConfig, events, logger))
 	logger.Info("Plex webhook enabled", "server", serverUrl, "machine_id", machineID, "endpoint", "/webhooks/plex")
 
 	return nil

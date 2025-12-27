@@ -12,32 +12,73 @@ import (
 // The central daemon loop consumes these actions and applies policy.
 // ============================================================================
 
-// Action is a marker interface for all daemon commands
-type Action interface{}
+// Action is a marker interface for all daemon commands.
+//
+// NOTE: Actions also implement the reducer's Event marker so they can be reduced directly
+// (option 2: use TimedEvent for timestamps, keep payload types clean).
+type Action interface {
+	eventMarker()
+}
 
 // VolumeHeld indicates a volume button is being held
 type VolumeHeld struct {
 	Direction int `json:"direction"` // -1 for down, 0 for none, +1 for up
 }
 
+func (VolumeHeld) eventMarker() {}
+
 // VolumeRelease indicates all volume buttons have been released
 type VolumeRelease struct{}
 
-// VolumeStep represents discrete volume adjustments from rotary encoders
-// This bypasses the velocity/hold system for clean step-based control
+func (VolumeRelease) eventMarker() {}
+
+// RotaryTurn represents a raw rotary encoder movement (detents/steps).
+// The reducer owns policy for converting this into volume changes (including velocity scaling).
+type RotaryTurn struct {
+	Steps int `json:"steps"` // positive=up, negative=down
+}
+
+func (RotaryTurn) eventMarker() {}
+
+// VolumeStep represents discrete volume adjustments from rotary encoders.
+// NOTE: This is an internal "derived" action that may be produced by the reducer.
 type VolumeStep struct {
 	Steps     int     `json:"steps"`                 // Number of detents/steps (positive=up, negative=down)
 	DbPerStep float64 `json:"db_per_step,omitempty"` // Optional: override default step size
 }
 
+func (VolumeStep) eventMarker() {}
+
 // ToggleMute requests mute state to be toggled
 type ToggleMute struct{}
+
+func (ToggleMute) eventMarker() {}
 
 // SetVolumeAbsolute requests volume to be set to a specific value
 type SetVolumeAbsolute struct {
 	Db     float64 `json:"db"`
 	Origin string  `json:"origin"` // e.g., "ir", "librespot", "ipc", "ui"
 }
+
+func (SetVolumeAbsolute) eventMarker() {}
+
+// ============================================================================
+// Media Transport Actions (no-op for now; emitted by input devices / IPC / UI)
+// ============================================================================
+
+type MediaPlayPause struct{}
+type MediaNext struct{}
+type MediaPrevious struct{}
+type MediaPlay struct{}
+type MediaPause struct{}
+type MediaStop struct{}
+
+func (MediaPlayPause) eventMarker() {}
+func (MediaNext) eventMarker()      {}
+func (MediaPrevious) eventMarker()  {}
+func (MediaPlay) eventMarker()      {}
+func (MediaPause) eventMarker()     {}
+func (MediaStop) eventMarker()      {}
 
 // ============================================================================
 // Librespot Event Actions
@@ -49,16 +90,22 @@ type LibrespotSessionConnected struct {
 	ConnectionId string `json:"connection_id"`
 }
 
+func (LibrespotSessionConnected) eventMarker() {}
+
 // LibrespotSessionDisconnected indicates a user disconnected from librespot
 type LibrespotSessionDisconnected struct {
 	UserName     string `json:"user_name"`
 	ConnectionId string `json:"connection_id"`
 }
 
+func (LibrespotSessionDisconnected) eventMarker() {}
+
 // LibrespotVolumeChanged indicates librespot volume changed
 type LibrespotVolumeChanged struct {
 	Volume uint16 `json:"volume"` // 0-65535
 }
+
+func (LibrespotVolumeChanged) eventMarker() {}
 
 // LibrespotTrackChanged indicates track changed in librespot
 type LibrespotTrackChanged struct {
@@ -68,12 +115,16 @@ type LibrespotTrackChanged struct {
 	Uri        string `json:"uri"`
 }
 
+func (LibrespotTrackChanged) eventMarker() {}
+
 // LibrespotPlaybackState indicates playback state changed
 type LibrespotPlaybackState struct {
 	State      string `json:"state"` // "playing", "paused", "stopped"
 	TrackId    string `json:"track_id"`
 	PositionMs string `json:"position_ms"`
 }
+
+func (LibrespotPlaybackState) eventMarker() {}
 
 // ============================================================================
 // Plexamp Event Actions
@@ -93,22 +144,24 @@ type PlexStateChanged struct {
 	PlayerProduct string `json:"player_product"` // Player product (e.g., "Plexamp")
 }
 
+func (PlexStateChanged) eventMarker() {}
+
 // ============================================================================
 // JSON Encoding/Decoding Support
 // ============================================================================
-// ActionEnvelope wraps actions for JSON serialization/deserialization.
+// EventEnvelope wraps events for JSON serialization/deserialization.
 // Since Go doesn't have union types, we use a type discriminator.
 // ============================================================================
 
-// ActionEnvelope wraps an action with a type discriminator for JSON marshaling
-type ActionEnvelope struct {
+// EventEnvelope wraps an event with a type discriminator for JSON marshaling
+type EventEnvelope struct {
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data,omitempty"`
 }
 
-// UnmarshalAction deserializes a JSON action envelope into a concrete Action
-func UnmarshalAction(data []byte) (Action, error) {
-	var env ActionEnvelope
+// UnmarshalEvent deserializes a JSON event envelope into a concrete Event
+func UnmarshalEvent(data []byte) (Event, error) {
+	var env EventEnvelope
 	if err := json.Unmarshal(data, &env); err != nil {
 		return nil, fmt.Errorf("unmarshal envelope: %w", err)
 	}
@@ -118,6 +171,13 @@ func UnmarshalAction(data []byte) (Action, error) {
 		var a VolumeHeld
 		if err := json.Unmarshal(env.Data, &a); err != nil {
 			return nil, fmt.Errorf("unmarshal VolumeHeld: %w", err)
+		}
+		return a, nil
+
+	case "rotary_turn":
+		var a RotaryTurn
+		if err := json.Unmarshal(env.Data, &a); err != nil {
+			return nil, fmt.Errorf("unmarshal RotaryTurn: %w", err)
 		}
 		return a, nil
 
@@ -140,6 +200,19 @@ func UnmarshalAction(data []byte) (Action, error) {
 			return nil, fmt.Errorf("unmarshal SetVolumeAbsolute: %w", err)
 		}
 		return a, nil
+
+	case "media_play_pause":
+		return MediaPlayPause{}, nil
+	case "media_next":
+		return MediaNext{}, nil
+	case "media_previous":
+		return MediaPrevious{}, nil
+	case "media_play":
+		return MediaPlay{}, nil
+	case "media_pause":
+		return MediaPause{}, nil
+	case "media_stop":
+		return MediaStop{}, nil
 
 	case "librespot_session_connected":
 		var a LibrespotSessionConnected
@@ -184,18 +257,18 @@ func UnmarshalAction(data []byte) (Action, error) {
 		return a, nil
 
 	default:
-		return nil, fmt.Errorf("unknown action type: %s", env.Type)
+		return nil, fmt.Errorf("unknown event type: %q", env.Type)
 	}
 }
 
-// MarshalAction serializes an Action into a JSON action envelope
-func MarshalAction(action Action) ([]byte, error) {
-	var env ActionEnvelope
+// MarshalEvent serializes an Event into a JSON envelope with type discriminator
+func MarshalEvent(e Event) ([]byte, error) {
+	var env EventEnvelope
 
-	switch a := action.(type) {
+	switch e := e.(type) {
 	case VolumeHeld:
 		env.Type = "volume_held"
-		data, err := json.Marshal(a)
+		data, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("marshal VolumeHeld: %w", err)
 		}
@@ -204,9 +277,17 @@ func MarshalAction(action Action) ([]byte, error) {
 	case VolumeRelease:
 		env.Type = "volume_release"
 
+	case RotaryTurn:
+		env.Type = "rotary_turn"
+		data, err := json.Marshal(e)
+		if err != nil {
+			return nil, fmt.Errorf("marshal RotaryTurn: %w", err)
+		}
+		env.Data = data
+
 	case VolumeStep:
 		env.Type = "volume_step"
-		data, err := json.Marshal(a)
+		data, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("marshal VolumeStep: %w", err)
 		}
@@ -217,15 +298,28 @@ func MarshalAction(action Action) ([]byte, error) {
 
 	case SetVolumeAbsolute:
 		env.Type = "set_volume_absolute"
-		data, err := json.Marshal(a)
+		data, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("marshal SetVolumeAbsolute: %w", err)
 		}
 		env.Data = data
 
+	case MediaPlayPause:
+		env.Type = "media_play_pause"
+	case MediaNext:
+		env.Type = "media_next"
+	case MediaPrevious:
+		env.Type = "media_previous"
+	case MediaPlay:
+		env.Type = "media_play"
+	case MediaPause:
+		env.Type = "media_pause"
+	case MediaStop:
+		env.Type = "media_stop"
+
 	case LibrespotSessionConnected:
 		env.Type = "librespot_session_connected"
-		data, err := json.Marshal(a)
+		data, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("marshal LibrespotSessionConnected: %w", err)
 		}
@@ -233,7 +327,7 @@ func MarshalAction(action Action) ([]byte, error) {
 
 	case LibrespotSessionDisconnected:
 		env.Type = "librespot_session_disconnected"
-		data, err := json.Marshal(a)
+		data, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("marshal LibrespotSessionDisconnected: %w", err)
 		}
@@ -241,7 +335,7 @@ func MarshalAction(action Action) ([]byte, error) {
 
 	case LibrespotVolumeChanged:
 		env.Type = "librespot_volume_changed"
-		data, err := json.Marshal(a)
+		data, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("marshal LibrespotVolumeChanged: %w", err)
 		}
@@ -249,7 +343,7 @@ func MarshalAction(action Action) ([]byte, error) {
 
 	case LibrespotTrackChanged:
 		env.Type = "librespot_track_changed"
-		data, err := json.Marshal(a)
+		data, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("marshal LibrespotTrackChanged: %w", err)
 		}
@@ -257,7 +351,7 @@ func MarshalAction(action Action) ([]byte, error) {
 
 	case LibrespotPlaybackState:
 		env.Type = "librespot_playback_state"
-		data, err := json.Marshal(a)
+		data, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("marshal LibrespotPlaybackState: %w", err)
 		}
@@ -265,14 +359,14 @@ func MarshalAction(action Action) ([]byte, error) {
 
 	case PlexStateChanged:
 		env.Type = "plex_state_changed"
-		data, err := json.Marshal(a)
+		data, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("marshal PlexStateChanged: %w", err)
 		}
 		env.Data = data
 
 	default:
-		return nil, fmt.Errorf("unknown action type: %T", action)
+		return nil, fmt.Errorf("unsupported event type: %T", e)
 	}
 
 	return json.Marshal(env)

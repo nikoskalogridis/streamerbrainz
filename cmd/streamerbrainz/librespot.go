@@ -10,7 +10,7 @@ import (
 // ============================================================================
 // Librespot Integration
 // ============================================================================
-// This module parses librespot onevent hooks and converts them to actions.
+// This module parses librespot onevent hooks and converts them to Events.
 // librespot passes events via environment variables.
 // Usage: streamerbrainz librespot-hook
 // ============================================================================
@@ -20,7 +20,7 @@ const (
 )
 
 // parseLibrespotEvent reads librespot event from environment variables
-func parseLibrespotEvent() (Action, error) {
+func parseLibrespotEvent() (Event, error) {
 	eventType := os.Getenv("PLAYER_EVENT")
 	if eventType == "" {
 		return nil, fmt.Errorf("PLAYER_EVENT not set")
@@ -81,25 +81,25 @@ func parseLibrespotEvent() (Action, error) {
 // runLibrespotHook handles librespot hook mode
 func runLibrespotHook(socketPath string, logger *slog.Logger) error {
 	// Parse event from environment
-	action, err := parseLibrespotEvent()
+	event, err := parseLibrespotEvent()
 	if err != nil {
 		return err
 	}
 
-	// Nil action means event doesn't translate yet
-	if action == nil {
+	// Nil event means event doesn't translate yet
+	if event == nil {
 		logger.Debug("librespot event ignored", "event", os.Getenv("PLAYER_EVENT"))
 		return nil
 	}
 
-	logger.Debug("librespot event", "event", os.Getenv("PLAYER_EVENT"), "action", fmt.Sprintf("%T", action))
+	logger.Debug("librespot event", "event", os.Getenv("PLAYER_EVENT"), "event", fmt.Sprintf("%T", event))
 
-	// Send action via IPC
-	if err := SendIPCAction(socketPath, action); err != nil {
-		return fmt.Errorf("send IPC action: %w", err)
+	// Send event via IPC
+	if err := SendIPCEvent(socketPath, event); err != nil {
+		return fmt.Errorf("send IPC event: %w", err)
 	}
 
-	logger.Debug("librespot action sent successfully")
+	logger.Debug("librespot event sent successfully")
 
 	return nil
 }
