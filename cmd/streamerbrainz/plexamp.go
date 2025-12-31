@@ -182,7 +182,7 @@ func handlePlexWebhook(config PlexampConfig, events chan<- Event, logger *slog.L
 }
 
 // setupPlexWebhook registers the Plex webhook endpoint
-func setupPlexWebhook(serverUrl, tokenFile, machineID string, events chan<- Event, logger *slog.Logger) error {
+func setupPlexWebhook(serverUrl, tokenFile, machineID string, mux *http.ServeMux, events chan<- Event, logger *slog.Logger) error {
 	// Load token from file
 	tokenBytes, err := os.ReadFile(tokenFile)
 	if err != nil {
@@ -193,13 +193,18 @@ func setupPlexWebhook(serverUrl, tokenFile, machineID string, events chan<- Even
 		return fmt.Errorf("plex token file is empty")
 	}
 
+	if mux == nil {
+		return fmt.Errorf("nil http mux")
+	}
+
+	// Configure Plexamp integration
 	plexConfig := PlexampConfig{
 		ServerUrl:         serverUrl,
 		Token:             token,
 		MachineIdentifier: machineID,
 	}
 
-	http.HandleFunc("/webhooks/plex", handlePlexWebhook(plexConfig, events, logger))
+	mux.HandleFunc("/webhooks/plex", handlePlexWebhook(plexConfig, events, logger))
 	logger.Info("Plex webhook enabled", "server", serverUrl, "machine_id", machineID, "endpoint", "/webhooks/plex")
 
 	return nil

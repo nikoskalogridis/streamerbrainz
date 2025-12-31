@@ -20,13 +20,20 @@ import (
 // gracefully when ctx is canceled.
 //
 // This replaces http.ListenAndServe so we can call Server.Shutdown during program shutdown.
-func runWebhooksServer(ctx context.Context, port int, logger *slog.Logger) error {
+//
+// NOTE: This function now accepts an explicit handler (mux) so the program can host
+// multiple endpoints (webhooks, websocket, etc.) on a single HTTP server.
+func runWebhooksServer(ctx context.Context, port int, handler http.Handler, logger *slog.Logger) error {
 	listenAddr := fmt.Sprintf(":%d", port)
 	logger.Info("webhooks server listening", "port", port)
 
+	if handler == nil {
+		return fmt.Errorf("nil http handler")
+	}
+
 	srv := &http.Server{
 		Addr:    listenAddr,
-		Handler: http.DefaultServeMux, // handlers are registered globally elsewhere
+		Handler: handler,
 	}
 
 	errCh := make(chan error, 1)

@@ -6,6 +6,27 @@ StreamerBrainz sits between your inputs/players and CamillaDSP. It listens for v
 
 **Security note:** StreamerBrainz is expected to run on a trusted local network and should not be exposed directly to the public internet (e.g., the webhook listener).
 
+### State WebSocket (UI / clients)
+
+StreamerBrainz exposes a WebSocket endpoint for real-time state updates (volume/mute). It is served on the **same HTTP server / port** as the webhooks listener.
+
+- Endpoint: `GET /ws/state`
+- Transport: WebSocket (JSON text frames)
+
+On connect, clients receive an initial snapshot:
+
+- `type`: `state_init`
+- `data`: `StateSnapshot` (currently includes observed CamillaDSP volume/mute)
+
+Subsequent updates are broadcast to all connected clients:
+
+- `type`: `volume_changed` with `data: { "volume_db": <float> }`
+- `type`: `mute_changed` with `data: { "muted": <bool> }`
+
+A minimal browser client example is included:
+
+- `examples/ws_client.html`
+
 ---
 
 ## Features

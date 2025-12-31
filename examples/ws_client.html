@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Streamerbrainz WS Client Example</title>
+        <style>
+            :root {
+                color-scheme: light dark;
+            }
+            body {
+                font-family:
+                    system-ui,
+                    -apple-system,
+                    Segoe UI,
+                    Roboto,
+                    Ubuntu,
+                    Cantarell,
+                    Noto Sans,
+                    sans-serif;
+                margin: 24px;
+                line-height: 1.4;
+            }
+            .row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 16px;
+                align-items: flex-end;
+            }
+            label {
+                display: grid;
+                gap: 6px;
+                min-width: 260px;
+            }
+            input {
+                font: inherit;
+                padding: 8px 10px;
+            }
+            button {
+                font: inherit;
+                padding: 8px 12px;
+                cursor: pointer;
+            }
+            .status {
+                padding: 8px 10px;
+                border-radius: 6px;
+                background: rgba(127, 127, 127, 0.15);
+            }
+            pre {
+                margin-top: 18px;
+                padding: 12px;
+                border-radius: 8px;
+                background: rgba(127, 127, 127, 0.12);
+                overflow: auto;
+                max-height: 60vh;
+            }
+            .pill {
+                display: inline-block;
+                padding: 2px 8px;
+                border-radius: 999px;
+                background: rgba(127, 127, 127, 0.18);
+                font-size: 12px;
+                margin-left: 8px;
+            }
+            .hint {
+                opacity: 0.8;
+                font-size: 13px;
+                margin-top: 8px;
+            }
+            code {
+                font-family:
+                    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+                    "Liberation Mono", "Courier New", monospace;
+            }
+        </style>
+    </head>
+
+    <body>
+        <h1>Streamerbrainz WebSocket Client Example</h1>
+
+        <div class="row">
+            <label>
+                WebSocket URL
+                <input id="wsUrl" />
+            </label>
+
+            <button id="connectBtn">Connect</button>
+            <button id="disconnectBtn" disabled>Disconnect</button>
+
+            <div class="status">
+                Status: <strong id="status">disconnected</strong>
+                <span class="pill" id="lastType">—</span>
+            </div>
+        </div>
+
+        <p class="hint">
+            This connects to <code>/ws/state</code> and expects JSON envelopes
+            like:
+            <code>{"type":"state_init","ts":"...","data":{...}}</code>
+        </p>
+
+        <pre id="log" aria-label="event log"></pre>
+
+        <script>
+            /**
+             * Minimal browser client for the daemon state WebSocket.
+             *
+             * How to use:
+             * 1) Run streamerbrainz so the HTTP server is listening (same port as webhooks).
+             * 2) Open this file in a browser.
+             * 3) Click "Connect". You should receive "state_init" immediately, then
+             *    "volume_changed" / "mute_changed" as the daemon observes changes.
+             *
+             * Notes:
+             * - If you're serving streamerbrainz on another host, change the URL accordingly.
+             * - If you're opening this file directly (file://), most browsers still allow WS,
+             *   but origin policies may apply server-side (CheckOrigin).
+             */
+            const logEl = document.getElementById("log");
+            const statusEl = document.getElementById("status");
+            const lastTypeEl = document.getElementById("lastType");
+            const wsUrlInput = document.getElementById("wsUrl");
+            const connectBtn = document.getElementById("connectBtn");
+            const disconnectBtn = document.getElementById("disconnectBtn");
+
+            // Default to current host (same port as webhooks).
+            const defaultUrl = (() => {
+                const isHttps = window.location.protocol === "https:";
+                const proto = isHttps ? "wss:" : "ws:";
+                const host = window.location.host || "localhost:8080";
+                return `${proto}//${host}/ws/state`;
+            })();
+
+            wsUrlInput.value = defaultUrl;
+
+            let ws = null;
+
+            function appendLog(line) {
+                logEl.textContent += line + "\n";
+                logEl.scrollTop = logEl.scrollHeight;
+            }
+
+            function setStatus(s) {
+                statusEl.textContent = s;
+            }
+
+            function setLastType(t) {
+                lastTypeEl.textContent = t || "—";
+            }
+
+            function pretty(obj) {
+                try {
+                    return JSON.stringify(obj, null, 2);
+                } catch {
+                    return String(obj);
+                }
+            }
+
+            function connect() {
+                if (
+                    ws &&
+                    (ws.readyState === WebSocket.OPEN ||
+                        ws.readyState === WebSocket.CONNECTING)
+                ) {
+                    appendLog("[client] already connected/connecting");
+                    return;
+                }
+
+                const url = wsUrlInput.value.trim();
+                if (!url) {
+                    appendLog("[client] missing ws url");
+                    return;
+                }
+
+                appendLog(`[client] connecting to ${url}`);
+                setStatus("connecting");
+                setLastType("");
+
+                ws = new WebSocket(url);
+
+                ws.onopen = () => {
+                    appendLog("[ws] open");
+                    setStatus("connected");
+                    connectBtn.disabled = true;
+                    disconnectBtn.disabled = false;
+                };
+
+                ws.onmessage = (evt) => {
+                    // Server sends JSON envelopes: {type, ts, data}
+                    let parsed = null;
+                    try {
+                        parsed = JSON.parse(evt.data);
+                    } catch (e) {
+                        appendLog(`[ws] message (non-json): ${evt.data}`);
+                        return;
+                    }
+
+                    const t =
+                        parsed && parsed.type ? parsed.type : "(missing type)";
+                    setLastType(t);
+
+                    appendLog(`[ws] ${t} ${parsed.ts ? "@ " + parsed.ts : ""}`);
+                    appendLog(pretty(parsed.data));
+                    appendLog("");
+                };
+
+                ws.onerror = (evt) => {
+                    appendLog("[ws] error (see console for details)");
+                    // Browser doesn't expose much in evt; log it anyway.
+                    console.error("ws error", evt);
+                };
+
+                ws.onclose = (evt) => {
+                    appendLog(
+                        `[ws] close code=${evt.code} reason=${evt.reason || "(none)"}`,
+                    );
+                    setStatus("disconnected");
+                    setLastType("");
+                    connectBtn.disabled = false;
+                    disconnectBtn.disabled = true;
+                    ws = null;
+                };
+            }
+
+            function disconnect() {
+                if (!ws) {
+                    appendLog("[client] not connected");
+                    return;
+                }
+                appendLog("[client] disconnecting");
+                ws.close(1000, "client disconnect");
+            }
+
+            connectBtn.addEventListener("click", connect);
+            disconnectBtn.addEventListener("click", disconnect);
+
+            // Optional: auto-connect if you add ?autoconnect=1 to the URL
+            const params = new URLSearchParams(window.location.search);
+            if (params.get("autoconnect") === "1") {
+                connect();
+            }
+        </script>
+    </body>
+</html>

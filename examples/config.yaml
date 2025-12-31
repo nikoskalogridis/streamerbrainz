@@ -35,6 +35,14 @@ ipc:
 webhooks:
   port: 3001
 
+# State WebSocket endpoint (served on the same HTTP server/port as webhooks)
+# Buffer sizing:
+# - send_buf: per-client outbound queue; slow clients are disconnected if this fills.
+# - broadcast_buf: hub inbound queue for frames awaiting fanout.
+websocket:
+  send_buf: 32
+  broadcast_buf: 128
+
 plex:
   enabled: false
   server_url: http://plex.home.arpa:32400

@@ -36,6 +36,9 @@ type Config struct {
 	// Webhooks server configuration
 	Webhooks WebhooksConfig `yaml:"webhooks"`
 
+	// WebSocket server configuration (state updates / UI clients)
+	WebSocket WebSocketConfig `yaml:"websocket"`
+
 	// Plex integration
 	Plex PlexConfig `yaml:"plex"`
 
@@ -76,6 +79,16 @@ type IPCConfig struct {
 
 type WebhooksConfig struct {
 	Port int `yaml:"port"`
+}
+
+type WebSocketConfig struct {
+	// SendBuf is the per-client outbound queue size. Slow clients are disconnected
+	// if they can't keep up and this buffer fills.
+	SendBuf int `yaml:"send_buf"`
+
+	// BroadcastBuf is the hub inbound broadcast queue size (frames waiting to be
+	// fanned out to clients).
+	BroadcastBuf int `yaml:"broadcast_buf"`
 }
 
 type PlexConfig struct {
@@ -159,6 +172,10 @@ func DefaultConfig() Config {
 		},
 		Webhooks: WebhooksConfig{
 			Port: 3001,
+		},
+		WebSocket: WebSocketConfig{
+			SendBuf:      32,
+			BroadcastBuf: 128,
 		},
 		Plex: PlexConfig{
 			Enabled:   false,
@@ -284,6 +301,14 @@ func (c *Config) Validate() error {
 		if c.Plex.MachineID == "" {
 			return errors.New("plex.enabled is true but plex.machine_id is empty")
 		}
+	}
+
+	// WebSocket
+	if c.WebSocket.SendBuf <= 0 {
+		return errors.New("websocket.send_buf must be > 0")
+	}
+	if c.WebSocket.BroadcastBuf <= 0 {
+		return errors.New("websocket.broadcast_buf must be > 0")
 	}
 
 	// Rotary encoder

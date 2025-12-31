@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -203,9 +204,12 @@ func main() {
 	// Central event bus
 	events := make(chan Event, 64)
 
+	// Reducer-emitted state broadcasts (for WebSocket/UI/etc). Must never block the daemon.
+	stateBroadcasts := make(chan StateBroadcast, 64)
+
 	// Start daemon loop (owns DaemonState and bootstraps via DaemonStarted)
 	g.Go(func() error {
-		runDaemon(ctx, events, client, cfg.ToVelocityConfig(), cfg.Rotary, cfg.CamillaDSP.UpdateHz, logger)
+		runDaemon(ctx, events, stateBroadcasts, client, cfg.ToVelocityConfig(), cfg.Rotary, cfg.CamillaDSP.UpdateHz, logger)
 		return nil
 	})
 
@@ -218,16 +222,31 @@ func main() {
 	// NOTE: setupPlexWebhook currently isn't context-aware; it may start background
 	// work internally. If it fails, cancel the program and let coordinated shutdown
 	// handle teardown.
+	// Shared HTTP mux for all HTTP endpoints (webhooks + websockets).
+	mux := http.NewServeMux()
+
 	if cfg.Plex.Enabled {
-		if err := setupPlexWebhook(cfg.Plex.ServerURL, cfg.Plex.TokenFile, cfg.Plex.MachineID, events, logger); err != nil {
+		if err := setupPlexWebhook(cfg.Plex.ServerURL, cfg.Plex.TokenFile, cfg.Plex.MachineID, mux, events, logger); err != nil {
 			logger.Error("failed to setup Plex webhook", "error", err)
 			stop()
 		}
 	}
 
+	// State WebSocket endpoint (initial snapshot via reducer; broadcasts via reducer outputs).
+	wsSrv := NewServer(logger, events, ServerConfig{
+		Hub: HubConfig{
+			SendBuf:      cfg.WebSocket.SendBuf,
+			BroadcastBuf: cfg.WebSocket.BroadcastBuf,
+		},
+	})
+	wsSrv.Register(mux, "/ws/state")
+	go wsSrv.Hub().Run(ctx)
+	go RunBroadcaster(ctx, wsSrv.Hub(), stateBroadcasts, logger)
+	logger.Info("state ws endpoint registered", "path", "/ws/state")
+
 	// Start webhooks HTTP server (context-aware; blocks until ctx is canceled)
 	g.Go(func() error {
-		return runWebhooksServer(ctx, cfg.Webhooks.Port, logger)
+		return runWebhooksServer(ctx, cfg.Webhooks.Port, mux, logger)
 	})
 
 	readErr := make(chan error, len(openDevices))

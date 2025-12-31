@@ -42,6 +42,7 @@ import (
 func runDaemon(
 	ctx context.Context,
 	events <-chan Event,
+	stateBroadcasts chan<- StateBroadcast,
 	client *CamillaDSPClient,
 	cfg VelocityConfig,
 	rotaryCfg RotaryConfig,
@@ -87,7 +88,7 @@ func runDaemon(
 		cmdQueue = append(cmdQueue, cmds...)
 	}
 
-	// Reduce all queued events, enqueuing any resulting commands.
+	// Reduce all queued events, enqueuing any resulting commands and publishing any broadcasts.
 	flushEvents := func() {
 		for len(eventQueue) > 0 {
 			ev := eventQueue[0]
@@ -98,6 +99,18 @@ func runDaemon(
 				state = rr.State
 			}
 			enqueueCommands(rr.Commands)
+
+			// Publish reducer-emitted broadcasts to external consumers (e.g., WebSocket hub).
+			// Never block the daemon loop; drop on backpressure, similar to obsCh behavior.
+			if stateBroadcasts != nil && len(rr.Broadcasts) > 0 {
+				for _, b := range rr.Broadcasts {
+					select {
+					case stateBroadcasts <- b:
+					default:
+						logger.Warn("state broadcast queue full, dropping broadcast")
+					}
+				}
+			}
 		}
 	}
 
@@ -144,9 +157,7 @@ func runDaemon(
 					select {
 					case obsCh <- obs:
 					default:
-						if logger != nil {
-							logger.Warn("effects observation queue full, dropping event")
-						}
+						logger.Warn("effects observation queue full, dropping event")
 					}
 				})
 			}

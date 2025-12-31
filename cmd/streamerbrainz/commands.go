@@ -60,3 +60,13 @@ type CmdGetState struct{}
 
 func (CmdGetState) commandMarker() {}
 func (CmdGetState) String() string { return "CmdGetState()" }
+
+// CmdPublishStateSnapshot delivers a reducer-produced StateSnapshot to an external requester.
+// This keeps the reducer pure by moving the actual channel send into the effects layer.
+type CmdPublishStateSnapshot struct {
+	Snapshot StateSnapshot
+	Reply    chan<- StateSnapshot
+}
+
+func (CmdPublishStateSnapshot) commandMarker()   {}
+func (c CmdPublishStateSnapshot) String() string { return "CmdPublishStateSnapshot()" }

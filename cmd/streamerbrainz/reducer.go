@@ -111,12 +111,62 @@ func clampVolumeDB(v float64, cfg VelocityConfig) float64 {
 // Reducer output
 // ==============================
 
-// ReduceResult is the output of Reduce(): the next state plus Commands to execute.
+// StateSnapshot is the externally-consumable snapshot of daemon state.
+// It is intentionally a copy/DTO (never a pointer to DaemonState) so external
+// consumers can't mutate daemon-owned state.
+//
+// NOTE: We'll extend this over time (e.g., players status) without exposing the
+// full internal DaemonState structure.
+type StateSnapshot struct {
+	// CamillaDSP (authoritative backend for volume/mute)
+	VolumeDB    float64   `json:"volume_db"`
+	VolumeKnown bool      `json:"volume_known"`
+	VolumeAt    time.Time `json:"volume_at"`
+
+	Muted     bool      `json:"muted"`
+	MuteKnown bool      `json:"mute_known"`
+	MuteAt    time.Time `json:"mute_at"`
+}
+
+// StateBroadcast is a reducer-emitted broadcast event intended for external consumers
+// (e.g. WebSocket clients). This is separate from reducer input Events.
+type StateBroadcast interface {
+	stateBroadcastMarker()
+}
+
+// BroadcastVolumeChanged is emitted when observed volume changes.
+type BroadcastVolumeChanged struct {
+	VolumeDB float64   `json:"volume_db"`
+	At       time.Time `json:"at"`
+}
+
+func (BroadcastVolumeChanged) stateBroadcastMarker() {}
+
+// BroadcastMuteChanged is emitted when observed mute changes.
+type BroadcastMuteChanged struct {
+	Muted bool      `json:"muted"`
+	At    time.Time `json:"at"`
+}
+
+func (BroadcastMuteChanged) stateBroadcastMarker() {}
+
+// RequestStateSnapshot asks the reducer to produce a snapshot for an external consumer.
+// The reply channel is carried through a Command so delivery happens in the effects layer
+// (no side effects in the reducer).
+type RequestStateSnapshot struct {
+	Reply chan<- StateSnapshot
+}
+
+func (RequestStateSnapshot) eventMarker() {}
+
+// ReduceResult is the output of Reduce(): the next state plus Commands to execute,
+// plus broadcast messages to publish externally.
 //
 // Commands are expected to be coalesced where appropriate (latest-wins).
 type ReduceResult struct {
-	State    *DaemonState
-	Commands []Command
+	State      *DaemonState
+	Commands   []Command
+	Broadcasts []StateBroadcast
 }
 
 // Reduce is the pure reducer.
@@ -134,6 +184,7 @@ func Reduce(s *DaemonState, e Event, cfg VelocityConfig, rotaryCfg RotaryConfig)
 	}
 
 	var cmds []Command
+	var broadcasts []StateBroadcast
 
 	switch ev := e.(type) {
 	case DaemonStarted:
@@ -337,11 +388,43 @@ func Reduce(s *DaemonState, e Event, cfg VelocityConfig, rotaryCfg RotaryConfig)
 		s.SetDesiredVolume(next)
 		s.VolumeCtrl.TargetDB = next
 
+	case RequestStateSnapshot:
+		// Build a DTO snapshot from daemon-owned state (safe copy; no pointers exposed).
+		// Delivery to the requester happens via a Command (effects layer), keeping the reducer pure.
+		snap := StateSnapshot{
+			VolumeDB:    s.Camilla.VolumeDB,
+			VolumeKnown: s.Camilla.VolumeKnown,
+			VolumeAt:    s.Camilla.VolumeAt,
+			Muted:       s.Camilla.Muted,
+			MuteKnown:   s.Camilla.MuteKnown,
+			MuteAt:      s.Camilla.MuteAt,
+		}
+		cmds = append(cmds, CmdPublishStateSnapshot{
+			Snapshot: snap,
+			Reply:    ev.Reply,
+		})
+
 	default:
 		// No-op for unhandled event types (e.g. media controls not wired yet).
 
 	case CamillaVolumeObserved:
+		prevKnown := s.Camilla.VolumeKnown
+		prevVolRounded := math.Round(s.Camilla.VolumeDB*10.0) / 10.0
+
+		// Store observed volume at full precision (daemon-owned truth).
+		// Round only for external broadcast emission to avoid noisy float jitter and reduce spam.
+		volRounded := math.Round(ev.VolumeDB*10.0) / 10.0
+
 		s.SetObservedVolume(ev.VolumeDB, ev.At)
+
+		// Broadcast only when the rounded observed value changes (or becomes known).
+		// NOTE: Payload uses the rounded value (0.1 dB), while internal state remains full precision.
+		if !prevKnown || prevVolRounded != volRounded {
+			broadcasts = append(broadcasts, BroadcastVolumeChanged{
+				VolumeDB: volRounded,
+				At:       ev.At,
+			})
+		}
 
 		// Keep controller position aligned with observed volume only if we are not currently holding.
 		// If a hold is active, preserve controller dynamics (inertia/decay) and let Tick integration
@@ -358,7 +441,18 @@ func Reduce(s *DaemonState, e Event, cfg VelocityConfig, rotaryCfg RotaryConfig)
 		}
 
 	case CamillaMuteObserved:
+		prevKnown := s.Camilla.MuteKnown
+		prevMuted := s.Camilla.Muted
+
 		s.SetObservedMute(ev.Muted, ev.At)
+
+		// Broadcast only on meaningful observed change.
+		if !prevKnown || prevMuted != ev.Muted {
+			broadcasts = append(broadcasts, BroadcastMuteChanged{
+				Muted: ev.Muted,
+				At:    ev.At,
+			})
+		}
 
 	case CamillaConfigFilePathObserved:
 		s.SetObservedConfigFilePath(ev.Path, ev.At)
@@ -372,7 +466,8 @@ func Reduce(s *DaemonState, e Event, cfg VelocityConfig, rotaryCfg RotaryConfig)
 	}
 
 	return ReduceResult{
-		State:    s,
-		Commands: cmds,
+		State:      s,
+		Commands:   cmds,
+		Broadcasts: broadcasts,
 	}
 }

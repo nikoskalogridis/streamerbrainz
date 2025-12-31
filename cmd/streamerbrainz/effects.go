@@ -38,9 +38,7 @@ func runEffect(
 	case CmdSetVolume:
 		vol, err := client.SetVolume(c.TargetDB)
 		if err != nil {
-			if logger != nil {
-				logger.Error("camilladsp SetVolume failed", "error", err, "target_db", c.TargetDB)
-			}
+			logger.Error("camilladsp SetVolume failed", "error", err, "target_db", c.TargetDB)
 			onEvent(CamillaCommandFailed{Command: cmd, Err: err, At: now})
 			return
 		}
@@ -49,9 +47,7 @@ func runEffect(
 	case CmdGetVolume:
 		vol, err := client.GetVolume()
 		if err != nil {
-			if logger != nil {
-				logger.Error("camilladsp GetVolume failed", "error", err)
-			}
+			logger.Error("camilladsp GetVolume failed", "error", err)
 			onEvent(CamillaCommandFailed{Command: cmd, Err: err, At: now})
 			return
 		}
@@ -60,9 +56,7 @@ func runEffect(
 	case CmdToggleMute:
 		muted, err := client.ToggleMute()
 		if err != nil {
-			if logger != nil {
-				logger.Error("camilladsp ToggleMute failed", "error", err)
-			}
+			logger.Error("camilladsp ToggleMute failed", "error", err)
 			onEvent(CamillaCommandFailed{Command: cmd, Err: err, At: now})
 			return
 		}
@@ -70,9 +64,7 @@ func runEffect(
 
 	case CmdSetMute:
 		if err := client.SetMute(c.Muted); err != nil {
-			if logger != nil {
-				logger.Error("camilladsp SetMute failed", "error", err, "muted", c.Muted)
-			}
+			logger.Error("camilladsp SetMute failed", "error", err, "muted", c.Muted)
 			onEvent(CamillaCommandFailed{Command: cmd, Err: err, At: now})
 			return
 		}
@@ -82,9 +74,7 @@ func runEffect(
 	case CmdGetMute:
 		muted, err := client.GetMute()
 		if err != nil {
-			if logger != nil {
-				logger.Error("camilladsp GetMute failed", "error", err)
-			}
+			logger.Error("camilladsp GetMute failed", "error", err)
 			onEvent(CamillaCommandFailed{Command: cmd, Err: err, At: now})
 			return
 		}
@@ -93,9 +83,7 @@ func runEffect(
 	case CmdGetConfigFilePath:
 		path, err := client.GetConfigFilePath()
 		if err != nil {
-			if logger != nil {
-				logger.Error("camilladsp GetConfigFilePath failed", "error", err)
-			}
+			logger.Error("camilladsp GetConfigFilePath failed", "error", err)
 			onEvent(CamillaCommandFailed{Command: cmd, Err: err, At: now})
 			return
 		}
@@ -104,19 +92,31 @@ func runEffect(
 	case CmdGetState:
 		st, err := client.GetState()
 		if err != nil {
-			if logger != nil {
-				logger.Error("camilladsp GetState failed", "error", err)
-			}
+			logger.Error("camilladsp GetState failed", "error", err)
 			onEvent(CamillaCommandFailed{Command: cmd, Err: err, At: now})
 			return
 		}
 		onEvent(CamillaProcessingStateObserved{State: st, At: now})
 
+	case CmdPublishStateSnapshot:
+		// Deliver reducer-produced snapshot to the requester.
+		// This keeps the reducer pure by moving the channel send into the effects layer.
+		if c.Reply == nil {
+			logger.Warn("state snapshot requested with nil reply channel")
+			return
+		}
+
+		// Never block the effects worker indefinitely.
+		select {
+		case c.Reply <- c.Snapshot:
+			// delivered
+		default:
+			logger.Warn("state snapshot reply channel not ready; dropping snapshot")
+		}
+
 	default:
 		// Unknown command: record failure so reducer can react (if desired).
-		if logger != nil {
-			logger.Warn("unknown command type", "command", cmd.String())
-		}
+		logger.Warn("unknown command type", "command", cmd.String())
 		onEvent(CamillaCommandFailed{
 			Command: cmd,
 			Err:     errUnknownCommand{cmd: cmd},
